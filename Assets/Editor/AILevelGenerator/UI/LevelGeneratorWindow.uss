@@ -1,0 +1,97 @@
+.main-container {
+    padding: 12px;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* 替代 gap：给每个子区块加下边距 */
+.main-container > .section,
+.main-container > .button-row {
+    margin-bottom: 12px;
+}
+
+.main-container > :last-child {
+    margin-bottom: 0;
+}
+
+.section {
+    flex-direction: column;
+}
+
+.section-title {
+    font-size: 14px;
+    -unity-font-style: bold;
+    color: #c0c0c0;
+    margin-bottom: 8px;
+}
+
+.form-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.form-row:last-child {
+    margin-bottom: 0;
+}
+
+.form-label {
+    width: 70px;
+    font-size: 12px;
+    color: #a0a0a0;
+    margin-right: 8px; /* 替代 gap */
+    flex-shrink: 0;
+}
+
+.form-control {
+    flex: 1;
+    height: 24px;
+}
+
+.input-area {
+    height: 100px;
+    flex-shrink: 0;
+}
+
+.button-row {
+    flex-direction: row;
+    height: 32px;
+}
+
+.primary-button {
+    flex: 2;
+    background-color: #2d6cdf;
+    color: white;
+    -unity-font-style: bold;
+    margin-right: 8px; /* 替代 gap */
+}
+
+.primary-button:hover {
+    background-color: #3a7bef;
+}
+
+.secondary-button {
+    flex: 1;
+    background-color: #3a3a3a;
+    color: #e0e0e0;
+}
+
+.log-section {
+    flex: 1;
+    min-height: 150px;
+    flex-direction: column;
+}
+
+.log-scroll {
+    flex: 1;
+    background-color: #1e1e1e;
+    border-width: 1px;
+    border-color: #333333;
+    padding: 8px;
+}
+
+.log-content {
+    font-size: 12px;
+    color: #d4d4d4;
+    white-space: pre-wrap;
+}

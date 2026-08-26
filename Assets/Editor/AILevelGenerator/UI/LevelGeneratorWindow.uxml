@@ -1,0 +1,30 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="True">
+    <Style src="project://database/Assets/Editor/AILevelGenerator/UI/LevelGeneratorWindow.uss?fileID=7433441132597879392&amp;guid=4fb1ee829e0e63642a7b0b5b42afbbdd&amp;type=3#LevelGeneratorWindow"/>
+    <ui:VisualElement name="main-container" class="main-container">
+        <ui:VisualElement class="section">
+            <ui:Label text="生成配置" class="section-title"/>
+            <ui:VisualElement class="form-row">
+                <ui:Label text="模板类型：" class="form-label" style="font-size: 13px;"/>
+                <ui:DropdownField name="template-dropdown" class="form-control"/>
+            </ui:VisualElement>
+            <ui:VisualElement class="form-row">
+                <ui:Label text="随机种子：" class="form-label" style="font-size: 13px;"/>
+                <ui:IntegerField name="seed-field" value="0" class="form-control"/>
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement class="section">
+            <ui:Label text="关卡描述" class="section-title"/>
+            <ui:TextField name="input-field" multiline="true" placeholder-text="例：森林营地，3个巡逻弓箭手，1个宝箱，难度普通" class="input-area" style="font-size: 13px;"/>
+        </ui:VisualElement>
+        <ui:VisualElement class="button-row">
+            <ui:Button name="generate-button" text="生成关卡" class="primary-button" style="font-size: 13px;"/>
+            <ui:Button name="clear-log-button" text="清空日志" class="secondary-button" style="font-size: 13px;"/>
+        </ui:VisualElement>
+        <ui:VisualElement class="section log-section">
+            <ui:Label text="运行日志" class="section-title"/>
+            <ui:ScrollView name="log-scroll" class="log-scroll">
+                <ui:Label name="log-content" text="等待生成任务...&#10;" class="log-content" style="font-size: 13px;"/>
+            </ui:ScrollView>
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

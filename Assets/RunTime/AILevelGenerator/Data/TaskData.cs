@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace AILevelGenerator.RunTime.Data
+namespace AILevelGenerator.Runtime.Data
 {
     [Serializable]
     public class TaskData

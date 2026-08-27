@@ -1,6 +1,6 @@
 using System;
 
-namespace AILevelGenerator.RunTime.Data
+namespace AILevelGenerator.Runtime.Data
 {
     /// <summary>
     /// 生成请求 DTO

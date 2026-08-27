@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace AILevelGenerator.RunTime.Data
+namespace AILevelGenerator.Runtime.Data
 {
     [Serializable]
     public class LevelData

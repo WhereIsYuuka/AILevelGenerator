@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace AILevelGenerator.RunTime
+namespace AILevelGenerator.Runtime
 {
     /// <summary>
     /// 角色控制器：WASD 水平移动，速度为 moveSpeed（默认 5），带简单重力。

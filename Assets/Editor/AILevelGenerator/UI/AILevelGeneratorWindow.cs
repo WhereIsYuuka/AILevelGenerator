@@ -9,10 +9,14 @@ namespace AILevelGenerator.Editor.UI
     /// <summary>
     /// AI关卡生成工具主窗口
     /// 职责：仅负责 UI 渲染与事件转发，不包含任何业务逻辑
+    /// 实现 ILogger：窗口即日志宿主，供校验器/生成器通过 SetLogger 注入
     /// </summary>
-    public class LevelGeneratorWindow : EditorWindow
+    public class AILevelGeneratorWindow : EditorWindow, AILevelGenerator.Runtime.Interfaces.ILogger
     {
-        [SerializeField] private VisualTreeAsset _uxmlAsset; // 在 Inspector 里拖拽赋值，彻底避免硬编码路径
+        /// <summary> Editor 资源路径常量：UXML 随代码版本管理，跨机器稳定；运行时资源才禁止硬编码路径 </summary>
+        private const string UxmlAssetPath = "Assets/Editor/AILevelGenerator/UI/LevelGeneratorWindow.uxml";
+
+        [SerializeField] private VisualTreeAsset _uxmlAsset; // Inspector 拖拽兜底（窗口布局持久化时生效）
 
         private DropdownField _templateDropdown;
         private IntegerField _seedField;
@@ -28,19 +32,20 @@ namespace AILevelGenerator.Editor.UI
         [MenuItem("Tools/AI Level Generator")]
         public static void ShowWindow()
         {
-            var window = GetWindow<LevelGeneratorWindow>("AI关卡生成工具");
+            var window = GetWindow<AILevelGeneratorWindow>("AI关卡生成工具");
             window.minSize = new Vector2(520, 600);
         }
 
         private void CreateGUI()
         {
-            // 1. 加载 UXML（使用 SerializeField 拖拽方式）
-            if (_uxmlAsset == null)
+            // 1. 加载 UXML：路径常量优先（Editor 资产随代码走），Inspector 拖拽绑定作为兜底
+            var uxml = _uxmlAsset != null ? _uxmlAsset : AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(UxmlAssetPath);
+            if (uxml == null)
             {
-                Debug.LogError("[AI Generator] UXML 资源未在 Inspector 中绑定，请拖拽赋值。");
+                Debug.LogError($"[AI Generator] UXML 资源未绑定且路径加载失败：{UxmlAssetPath}");
                 return;
             }
-            rootVisualElement.Add(_uxmlAsset.Instantiate());
+            rootVisualElement.Add(uxml.Instantiate());
 
             // 2. 绑定控件
             BindControls();
@@ -176,6 +181,28 @@ namespace AILevelGenerator.Editor.UI
             {
                 _logScroll.ScrollTo(_logContent);
             }
+        }
+
+        #endregion
+
+        #region ILogger 实现（窗口即日志宿主，供校验器/生成器通过 SetLogger 注入）
+
+        void AILevelGenerator.Runtime.Interfaces.ILogger.Log(string message) => Log(message);
+
+        void AILevelGenerator.Runtime.Interfaces.ILogger.LogWarning(string message) => LogWarning(message);
+
+        void AILevelGenerator.Runtime.Interfaces.ILogger.LogError(string message) => LogError(message);
+
+        void AILevelGenerator.Runtime.Interfaces.ILogger.LogSuccess(string message) => LogSuccess(message);
+
+        void AILevelGenerator.Runtime.Interfaces.ILogger.Clear() => OnClearLogClicked();
+
+        event Action<string, AILevelGenerator.Runtime.Interfaces.LogLevel>
+            AILevelGenerator.Runtime.Interfaces.ILogger.OnLogReceived
+        {
+            // 窗口日志直接渲染进 UI，无需向外部转发
+            add { }
+            remove { }
         }
 
         #endregion

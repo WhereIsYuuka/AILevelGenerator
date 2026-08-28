@@ -131,7 +131,6 @@ GameObject:
   - component: {fileID: 6838414}
   - component: {fileID: 6838413}
   - component: {fileID: 6838412}
-  - component: {fileID: 6838411}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -139,18 +138,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &6838411
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6838410}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 269a6b858771ad64bbabc784900eceb3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AILevelGenerator.RunTime.HelloWorld
 --- !u!65 &6838412
 BoxCollider:
   m_ObjectHideFlags: 0

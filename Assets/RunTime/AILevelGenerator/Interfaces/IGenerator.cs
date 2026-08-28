@@ -9,7 +9,7 @@ namespace AILevelGenerator.Runtime.Interfaces
         /// 生成器接口,屏蔽具体 LLM 实现
         /// </summary>
         /// <param name="request"></param>
-        /// <returns></returns>
-        Task<GenerationRequest> GenerateAsync(GenerationRequest request);
+        /// <returns>生成结果（LevelData + Tasks + 校验错误/警告）</returns>
+        Task<GenerationResult> GenerateAsync(GenerationRequest request);
     }
 }

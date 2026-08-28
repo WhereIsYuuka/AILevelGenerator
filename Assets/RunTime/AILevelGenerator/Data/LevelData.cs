@@ -21,7 +21,7 @@ namespace AILevelGenerator.Runtime.Data
         public string PrefabLogicalName;    // 对应资源映射表的 Key
         public Vector3 Position;
         public Vector3 Rotation;
-        public Vector3 Scale = Vector3.zero;
+        public Vector3 Scale = Vector3.one; // 默认单位缩放，防止零缩放导致物体不可见
     }
 
     [Serializable]

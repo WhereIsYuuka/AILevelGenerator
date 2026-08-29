@@ -11,6 +11,10 @@
                 <ui:Label text="随机种子：" class="form-label" style="font-size: 13px;"/>
                 <ui:IntegerField name="seed-field" value="0" class="form-control"/>
             </ui:VisualElement>
+            <ui:VisualElement class="form-row">
+                <ui:Label text="生成状态：" class="form-label" style="font-size: 13px;"/>
+                <ui:Label name="status-label" text="待命" class="status-label" style="font-size: 13px;"/>
+            </ui:VisualElement>
         </ui:VisualElement>
         <ui:VisualElement class="section">
             <ui:Label text="关卡描述" class="section-title"/>

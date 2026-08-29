@@ -10,7 +10,8 @@
     margin-bottom: 12px;
 }
 
-.main-container > :last-child {
+/* UI Toolkit 不支持 :last-child 伪类；最后一个区块（日志区）直接清零下边距 */
+.main-container > .log-section {
     margin-bottom: 0;
 }
 
@@ -31,10 +32,6 @@
     margin-bottom: 8px;
 }
 
-.form-row:last-child {
-    margin-bottom: 0;
-}
-
 .form-label {
     width: 70px;
     font-size: 12px;
@@ -46,6 +43,13 @@
 .form-control {
     flex: 1;
     height: 24px;
+}
+
+/* 生成状态行（颜色由 C# 按状态机状态覆盖） */
+.status-label {
+    flex: 1;
+    font-size: 13px;
+    color: #a0a0a0;
 }
 
 .input-area {

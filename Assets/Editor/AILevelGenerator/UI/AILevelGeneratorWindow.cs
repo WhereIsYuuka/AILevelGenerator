@@ -1,8 +1,13 @@
 using System;
 using System.Collections.Generic;
+using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Utilities;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
+// 别名 using：避免与 UnityEngine.ILogger 歧义（类声明与显式实现保持全限定名）
+using IGeneratorScheduler = AILevelGenerator.Runtime.Interfaces.IGeneratorScheduler;
+using GenerationTaskState = AILevelGenerator.Runtime.Scheduling.GenerationTaskState;
 
 namespace AILevelGenerator.Editor.UI
 {
@@ -25,6 +30,11 @@ namespace AILevelGenerator.Editor.UI
         private Button _clearLogBtn;
         private ScrollView _logScroll;
         private Label _logContent;
+        private Label _statusLabel;
+
+        // 调度链路（经 ServiceLocator 获取，窗口不 new 任何具体业务类）
+        private IGeneratorScheduler _scheduler;
+        private bool _stateSubscribed; // CreateGUI 会被多次调用，防止重复订阅 StateChanged
         
         private readonly List<string> _logEntries = new List<string>(); // 内存缓存，避免字符串频繁拼接
         private const int MaxLogEntries = 500; // 防止内存泄漏
@@ -56,7 +66,10 @@ namespace AILevelGenerator.Editor.UI
             // 4. 注册事件
             RegisterEvents();
 
-            // 5. 渲染已有日志（窗口重绘时保留）
+            // 5. 接线调度器：ServiceLocator 获取 → 注入日志宿主 → 订阅状态 → 初始渲染
+            InitScheduler();
+
+            // 6. 渲染已有日志（窗口重绘时保留）
             RenderLogs();
             
             Log("工具初始化完成");
@@ -71,6 +84,7 @@ namespace AILevelGenerator.Editor.UI
             _clearLogBtn = rootVisualElement.Q<Button>("clear-log-button");
             _logScroll = rootVisualElement.Q<ScrollView>("log-scroll");
             _logContent = rootVisualElement.Q<Label>("log-content");
+            _statusLabel = rootVisualElement.Q<Label>("status-label");
             
             // 开启富文本支持，用于显示彩色日志
             _logContent.enableRichText = true;
@@ -108,12 +122,65 @@ namespace AILevelGenerator.Editor.UI
             Log($"开始生成 - 模板：{template}，种子：{seed}");
             Log($"描述：{input}");
 
-            // 通过 ServiceLocator 获取调度器，窗口不 new 任何具体类
-            // TODO: Day5 接入真实调度器
-            // var scheduler = ServiceLocator.Get<IGeneratorScheduler>();
-            // scheduler.StartGeneration(new GenerationRequest { Prompt = input, TemplateId = template, RandomSeed = seed });
-            
-            Log("[提示] 生成链路待接入，当前为界面演示");
+            if (_scheduler == null)
+            {
+                LogError("调度器未注册，无法生成");
+                return;
+            }
+
+            // fire-and-forget：调度器内部捕获全部异常并转为 Failed 状态，返回的 Task 永不清零，可安全丢弃
+            _ = _scheduler.StartGenerationAsync(new GenerationRequest
+            {
+                Prompt = input,
+                TemplateId = template,
+                RandomSeed = seed
+            });
+        }
+
+        /// <summary>
+        /// 从 ServiceLocator 获取调度器并接线：注入日志宿主、订阅状态变更、渲染初始状态
+        /// </summary>
+        private void InitScheduler()
+        {
+            _scheduler = ServiceLocator.Get<IGeneratorScheduler>();
+            if (_scheduler == null)
+            {
+                LogError("调度器未注册（ServiceLocator），生成功能不可用");
+                _generateBtn.SetEnabled(false);
+                return;
+            }
+
+            _scheduler.SetLogger(this); // 窗口即日志宿主
+
+            if (!_stateSubscribed)
+            {
+                _scheduler.StateChanged += OnSchedulerStateChanged;
+                _stateSubscribed = true;
+            }
+
+            OnSchedulerStateChanged(_scheduler.CurrentState); // 初始渲染
+        }
+
+        /// <summary>
+        /// 调度器状态变更处理：更新状态标签与生成按钮可用性（单一入口，与状态机保持一致）
+        /// </summary>
+        private void OnSchedulerStateChanged(GenerationTaskState state)
+        {
+            if (this == null || _statusLabel == null) return; // 窗口销毁后回调保护
+
+            var (text, color) = state switch
+            {
+                GenerationTaskState.Ready => ("待命", new Color(0.62f, 0.62f, 0.62f)),
+                GenerationTaskState.Generating => ("生成中...", new Color(0.25f, 0.6f, 1f)),
+                GenerationTaskState.Success => ("生成成功", new Color(0.25f, 0.8f, 0.25f)),
+                GenerationTaskState.Failed => ("生成失败", new Color(1f, 0.32f, 0.32f)),
+                _ => (state.ToString(), Color.white)
+            };
+            _statusLabel.text = text;
+            _statusLabel.style.color = color;
+
+            if (_generateBtn != null)
+                _generateBtn.SetEnabled(!_scheduler.IsBusy); // 生成中禁用，防重复提交
         }
 
         private void OnClearLogClicked()
@@ -209,8 +276,13 @@ namespace AILevelGenerator.Editor.UI
 
         private void OnDestroy()
         {
-            // 清理延迟回调，防止内存泄露
+            // 清理延迟回调与状态订阅，防止内存泄露
             EditorApplication.delayCall -= RenderLogsSafe;
+            if (_scheduler != null && _stateSubscribed)
+            {
+                _scheduler.StateChanged -= OnSchedulerStateChanged;
+                _stateSubscribed = false;
+            }
         }
     }
 }

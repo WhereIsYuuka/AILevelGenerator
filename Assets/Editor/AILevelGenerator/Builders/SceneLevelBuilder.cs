@@ -7,6 +7,7 @@ using AILevelGenerator.Runtime.Data;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Utilities;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 namespace AILevelGenerator.Editor.Builders
@@ -25,6 +26,8 @@ namespace AILevelGenerator.Editor.Builders
         private readonly IResourceMapper _resourceMapper;
         private readonly IRollbackManager _rollbackManager; // Day3：取消清理统一经回滚管理器（分帧删除），null 退回自删
         private readonly ComponentBinder _componentBinder; // Day4：实例化后自动挂载逻辑组件，null = 不绑定（向后兼容）
+        private readonly NavMeshBaker _navMeshBaker; // Day5：收尾同步烘焙全局 NavMesh，null = 不烘焙（向后兼容）
+        private readonly NavMeshBakeTracker _bakeTracker = new(); // Day5：烘焙状态与文案（日志/进度提示）
 
         private LevelBuildOptions _options;
         private FrameBudgetCalculator _budget;
@@ -49,12 +52,14 @@ namespace AILevelGenerator.Editor.Builders
 
         /// <param name="rollbackManager">回滚管理器（可选）：取消/失败时经其分帧删除本次生成根；null 退回同步自删（向后兼容）</param>
         /// <param name="componentBinder">组件绑定器（可选，Day4）：实例化后按逻辑名挂载逻辑组件；null = 不绑定（向后兼容）</param>
+        /// <param name="navMeshBaker">NavMesh 烘焙器（可选，Day5）：构建收尾同步烘焙全局 NavMesh；null = 不烘焙（向后兼容）</param>
         public SceneLevelBuilder(IResourceMapper resourceMapper, IRollbackManager rollbackManager = null,
-            ComponentBinder componentBinder = null)
+            ComponentBinder componentBinder = null, NavMeshBaker navMeshBaker = null)
         {
             _resourceMapper = resourceMapper;
             _rollbackManager = rollbackManager;
             _componentBinder = componentBinder;
+            _navMeshBaker = navMeshBaker;
         }
 
         public bool IsBuilding => _tcs != null && !_tcs.Task.IsCompleted;
@@ -179,6 +184,9 @@ namespace AILevelGenerator.Editor.Builders
             }
             ProgressChanged?.Invoke(1f);
 
+            // —— 阶段 3.5（Day5）：环境适配 —— 同步烘焙全局 NavMesh（最后一帧，用户可感知）——
+            BakeEnvironment();
+
             // —— 阶段 4：收尾 ——
             var buildTime = (float)(EditorApplication.timeSinceStartup - _startTime);
             Finish(LevelBuildResult.Succeeded(_instantiatedCount, _skippedCount, buildTime,
@@ -236,6 +244,38 @@ namespace AILevelGenerator.Editor.Builders
                 _skippedCount++;
                 Debug.LogWarning($"[AI Generator] 实例化异常，跳过：{prop?.PrefabLogicalName} - {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 环境自动适配（Day5）：收尾同步烘焙全局 NavMesh。
+        /// 烘焙为同步阻塞操作（需求指定），阻塞前必须给出「烘焙中」用户提示（模态进度条立即绘制 + 日志），
+        /// 避免用户误以为卡死；完成后清理进度条、登记场景脏标记（场景状态同步），并输出结果日志。
+        /// 未注入烘焙器时整段跳过（向后兼容）；烘焙失败仅告警，不中断生成流程。
+        /// </summary>
+        private void BakeEnvironment()
+        {
+            if (_navMeshBaker == null) return;
+
+            // 「烘焙中」提示：DisplayProgressBar 为立即绘制的模态进度条，同步阻塞期间依然可见；日志同步输出
+            _bakeTracker.BeginBaking();
+            EditorUtility.DisplayProgressBar("AI 关卡生成", _bakeTracker.Message, 0.97f);
+            Debug.Log($"[AI Generator] {_bakeTracker.Message}");
+
+            // 排除本次生成实体（角色不作为 NavMesh 障碍物，保证其 NavMeshAgent 脚下有数据可落地寻路）
+            var ok = _navMeshBaker.BakeGlobal(_bakeTracker, _root != null ? _root.transform : null);
+            EditorUtility.ClearProgressBar(); // 无论成败都清理模态进度条
+
+            if (ok)
+            {
+                Debug.Log($"[AI Generator] {_bakeTracker.Message}（同步完成，怪物可被 NavMeshAgent 识别）");
+            }
+            else
+            {
+                Debug.LogWarning($"[AI Generator] {_bakeTracker.Message}（不影响场景实例化，仅寻路不可用）");
+            }
+
+            // 场景状态同步：烘焙改了场景数据（NavMesh 覆盖范围），标记场景为需要保存
+            EditorSceneManager.MarkSceneDirty(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
         }
 
         /// <summary>

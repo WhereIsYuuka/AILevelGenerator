@@ -25,3 +25,5 @@ MonoBehaviour:
         Value: 6
       - Key: moveSpeed
         Value: 2.5
+      - Key: useNavMesh
+        Value: true

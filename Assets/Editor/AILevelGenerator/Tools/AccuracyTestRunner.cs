@@ -31,7 +31,10 @@ namespace AILevelGenerator.Editor.Tools
             "废弃矿洞：3 个宝箱，2 个巡逻弓箭手，任务为收集矿晶 3 个"
         };
 
-        [MenuItem("Tools/AI Level Generator/运行准确率测试（20 次）")]
+        // 菜单路径注意：不得挂在 "Tools/AI Level Generator"（窗口叶子项）之下——Unity 菜单系统
+        // 同路径"叶子项 + 子菜单"并存时，子菜单优先，叶子项会被吞掉（点击与 ExecuteMenuItem 均失效，
+        // 表现为窗口入口消失，Day5 线上发现的坑）。因此测试项独立为兄弟菜单，与窗口项互不冲突。
+        [MenuItem("Tools/AI Level Generator Tests/运行准确率测试（20 次）")]
         public static async void RunAccuracyTest()
         {
             var generator = ServiceLocator.Get<IGenerator>();

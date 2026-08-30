@@ -150,6 +150,39 @@ namespace AILevelGenerator.Tests.EditMode
         }
 
         [Test]
+        public void 绑定_useNavMesh为true_自动挂载NavMeshAgent()
+        {
+            var config = ScriptableObject.CreateInstance<ComponentBindingConfig>();
+            var binding = new LogicalBinding { LogicalName = "寻路怪" };
+            binding.Components.Add(new ComponentBindingEntry
+            {
+                ComponentTypeName = "AILevelGenerator.Runtime.Components.BasicAI",
+                Parameters = { new ParameterOverride { Key = "useNavMesh", Value = "true" } }
+            });
+            config.Bindings.Add(binding);
+            var binder = new ComponentBinder(config, new TestLogger());
+            var go = new GameObject("实体");
+
+            binder.BindTo("寻路怪", go);
+
+            var ai = go.GetComponent<BasicAI>();
+            Assert.IsNotNull(ai, "应挂载 BasicAI");
+            Assert.IsNotNull(go.GetComponent<UnityEngine.AI.NavMeshAgent>(), "useNavMesh=true 应自动挂载 NavMeshAgent");
+        }
+
+        [Test]
+        public void 绑定_未配置useNavMesh_不挂载NavMeshAgent()
+        {
+            var binder = new ComponentBinder(CreateConfig(), new TestLogger());
+            var go = new GameObject("实体");
+
+            binder.BindTo("敌人-弓箭手", go);
+
+            Assert.IsNotNull(go.GetComponent<BasicAI>());
+            Assert.IsNull(go.GetComponent<UnityEngine.AI.NavMeshAgent>(), "默认不启用 NavMesh（向后兼容纯数学巡逻）");
+        }
+
+        [Test]
         public void 绑定_未配置逻辑名_空结果不报错()
         {
             var logger = new TestLogger();

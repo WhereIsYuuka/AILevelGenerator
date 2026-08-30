@@ -61,10 +61,14 @@ namespace AILevelGenerator.Editor.Core
             }
             var componentBinder = new ComponentBinder(bindingConfig);
 
+            // 环境自动适配（Day5）：收尾同步烘焙全局 NavMesh（全场景收集 → BuildNavMeshData → 注册数据）
+            var navMeshBaker = new NavMeshBaker();
+
             // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）。
             // 注入回滚管理器：取消/失败时经其分帧删除本次生成根，不阻塞编辑器；
-            // 注入组件绑定器：实例化后自动挂载逻辑组件（按逻辑名查绑定配置）。
-            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager, componentBinder));
+            // 注入组件绑定器：实例化后自动挂载逻辑组件（按逻辑名查绑定配置）；
+            // 注入 NavMesh 烘焙器：构建收尾同步烘焙全局 NavMesh（「烘焙中」提示 + 完成日志 + 场景状态同步）。
+            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager, componentBinder, navMeshBaker));
 
             // 调度器：注入构建器后，生成成功会自动进入分帧构建阶段（构建完成才算整条任务成功）
             var scheduler = new GeneratorScheduler(generator);

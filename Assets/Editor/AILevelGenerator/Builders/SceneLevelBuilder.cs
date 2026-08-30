@@ -30,7 +30,16 @@ namespace AILevelGenerator.Editor.Builders
         private bool _cancelRequested;
         private int _instantiatedCount;
         private int _skippedCount;
+        private int _groundFittedCount;
+        private int _resolvedOverlapPairs;
+        private float _overlapRatio;
         private float _startTime;
+
+        /// <summary> 已实例化物体（供 Day2 布局阶段重叠检测/分离） </summary>
+        private readonly List<GameObject> _instances = new();
+
+        /// <summary> 布局修正最大迭代轮数（每轮一帧），防止全重叠极端布局无限循环 </summary>
+        private const int MaxLayoutRounds = 10;
 
         public SceneLevelBuilder(IResourceMapper resourceMapper)
         {
@@ -57,6 +66,10 @@ namespace AILevelGenerator.Editor.Builders
             _cancelRequested = false;
             _instantiatedCount = 0;
             _skippedCount = 0;
+            _groundFittedCount = 0;
+            _resolvedOverlapPairs = 0;
+            _overlapRatio = 0f;
+            _instances.Clear();
             _startTime = (float)EditorApplication.timeSinceStartup;
 
             _coroutine = EditorCoroutine.Start(BuildRoutine(levelData));
@@ -110,7 +123,6 @@ namespace AILevelGenerator.Editor.Builders
                 if (index < total) yield return null; // 未完成 → 下一帧继续
             }
 
-            // —— 阶段 3：收尾 ——
             if (_cancelRequested)
             {
                 CleanupRoot(); // 增量取消：删除本次生成的根物体（Day3 起经 IRollbackManager 接口统一执行）
@@ -118,8 +130,41 @@ namespace AILevelGenerator.Editor.Builders
                 yield break;
             }
 
+            // —— 阶段 3（Day2）：Layout —— 分帧重叠检测与自动修正 ——
+            // 需要全部物体在场才能正确检测（分帧实例化时后面的物体尚不存在），
+            // 故作为独立阶段在实例化完成后执行；每轮一帧（yield null），不阻塞编辑器。
+            // 顺序：先水平分离重叠（此时物体可能仍浮空，但分离只动 x/z），再统一地面贴合——
+            // 若先贴合，重叠的物体互相挡住地面射线会"叠罗汉"（射线排除逻辑见 SceneLayoutProcessor）。
+            // 注：EditMode 下动态创建且未被任何物理查询触碰过的 Collider 未注册进物理场景，
+            // OverlapSphere 会查不到（全 miss）——先 SyncTransforms 触发注册（粗筛仍带纯几何兜底）。
+            Physics.SyncTransforms();
+            var rounds = 0;
+            while (rounds < MaxLayoutRounds)
+            {
+                if (_cancelRequested)
+                {
+                    CleanupRoot();
+                    Finish(LevelBuildResult.Cancelled(_instantiatedCount));
+                    yield break;
+                }
+                var fixedPairs = SceneLayoutProcessor.ResolveRound(_instances);
+                _resolvedOverlapPairs += fixedPairs;
+                if (fixedPairs == 0) break; // 已无重叠，收敛
+                rounds++;
+                yield return null; // 每轮一帧：布局修正分帧推进
+            }
+            _overlapRatio = SceneLayoutProcessor.GetOverlapRatio(_instances);
+
+            // 统一地面贴合（射线级开销，一次完成；无地面/未命中的物体保持原坐标）
+            foreach (var instance in _instances)
+            {
+                if (SceneLayoutProcessor.FitToGround(instance, _root.transform)) _groundFittedCount++;
+            }
+
+            // —— 阶段 4：收尾 ——
             var buildTime = (float)(EditorApplication.timeSinceStartup - _startTime);
-            Finish(LevelBuildResult.Succeeded(_instantiatedCount, _skippedCount, buildTime));
+            Finish(LevelBuildResult.Succeeded(_instantiatedCount, _skippedCount, buildTime,
+                _overlapRatio, _resolvedOverlapPairs, _groundFittedCount));
         }
 
         /// <summary>
@@ -155,6 +200,8 @@ namespace AILevelGenerator.Editor.Builders
                 instance.transform.rotation = Quaternion.Euler(prop.Rotation);
                 instance.transform.localScale = prop.Scale;
                 instance.name = prop.PrefabLogicalName; // 层级按逻辑名显示，便于策划识别与后续绑定
+
+                _instances.Add(instance); // 供布局阶段重叠检测/分离
                 _instantiatedCount++;
             }
             catch (Exception ex)

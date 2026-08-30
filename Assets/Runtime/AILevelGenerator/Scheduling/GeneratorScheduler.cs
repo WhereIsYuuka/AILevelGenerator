@@ -113,7 +113,10 @@ namespace AILevelGenerator.Runtime.Scheduling
                 if (buildResult != null && buildResult.IsSuccess)
                 {
                     _stateMachine.TryTransit(GenerationTaskState.Success);
-                    _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}（构建 {buildResult.InstantiatedCount} 个实体，生成 {result.GenerationTime:F1}s + 构建 {buildResult.BuildTime:F1}s）");
+                    var layoutInfo = buildResult.OverlapRatio > 0f
+                        ? $"，重叠修正 {buildResult.ResolvedOverlapPairs} 对（残留重叠率 {buildResult.OverlapRatio:P1}）"
+                        : "";
+                    _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}（构建 {buildResult.InstantiatedCount} 个实体，生成 {result.GenerationTime:F1}s + 构建 {buildResult.BuildTime:F1}s{layoutInfo}）");
                     return;
                 }
 

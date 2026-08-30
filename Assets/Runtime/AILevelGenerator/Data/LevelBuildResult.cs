@@ -22,19 +22,28 @@ namespace AILevelGenerator.Runtime.Data
     public class LevelBuildResult
     {
         public LevelBuildStatus Status;
-        public int InstantiatedCount;   // 成功实例化的物体数
-        public int SkippedCount;        // 跳过数（未命中资源映射/实例化失败的 Props）
+        public int InstantiatedCount;     // 成功实例化的物体数
+        public int SkippedCount;          // 跳过数（未命中资源映射/实例化失败的 Props）
         public string ErrorMessage;
-        public float BuildTime;         // 构建耗时（秒）
+        public float BuildTime;           // 构建耗时（秒）
+
+        // —— Day2 布局修正统计 ——
+        public float OverlapRatio;        // 残留重叠率（0~1，验收 <0.1）
+        public int ResolvedOverlapPairs;  // 重叠修正的对数
+        public int GroundFittedCount;     // 地面贴合成功数
 
         public bool IsSuccess => Status == LevelBuildStatus.Succeeded;
 
-        public static LevelBuildResult Succeeded(int instantiated, int skipped, float buildTime) => new()
+        public static LevelBuildResult Succeeded(int instantiated, int skipped, float buildTime,
+            float overlapRatio = 0f, int resolvedPairs = 0, int groundFitted = 0) => new()
         {
             Status = LevelBuildStatus.Succeeded,
             InstantiatedCount = instantiated,
             SkippedCount = skipped,
-            BuildTime = buildTime
+            BuildTime = buildTime,
+            OverlapRatio = overlapRatio,
+            ResolvedOverlapPairs = resolvedPairs,
+            GroundFittedCount = groundFitted
         };
 
         public static LevelBuildResult Failed(string message, int instantiated = 0) => new()

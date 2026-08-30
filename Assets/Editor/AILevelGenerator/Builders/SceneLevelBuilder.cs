@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using AILevelGenerator.Runtime.Components;
 using AILevelGenerator.Runtime.Data;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Utilities;
@@ -17,11 +18,13 @@ namespace AILevelGenerator.Editor.Builders
     /// 根物体管理：全部实例挂在 "[AI Generated] &lt;LevelName&gt;" 根下，便于增量取消（Day3 起经 IRollbackManager
     /// 统一执行删除）与场景层级识别。
     /// 资源解耦：构造注入 IResourceMapper（逻辑名 → 预制体）；未命中映射的 Prop 记日志跳过，不中断整轮构建。
+    /// 组件绑定（Day4）：实例化后同帧经 ComponentBinder 按逻辑名挂载逻辑组件（分帧节奏内完成，不额外占帧）。
     /// </summary>
     public class SceneLevelBuilder : ILevelBuilder
     {
         private readonly IResourceMapper _resourceMapper;
         private readonly IRollbackManager _rollbackManager; // Day3：取消清理统一经回滚管理器（分帧删除），null 退回自删
+        private readonly ComponentBinder _componentBinder; // Day4：实例化后自动挂载逻辑组件，null = 不绑定（向后兼容）
 
         private LevelBuildOptions _options;
         private FrameBudgetCalculator _budget;
@@ -34,6 +37,8 @@ namespace AILevelGenerator.Editor.Builders
         private int _groundFittedCount;
         private int _resolvedOverlapPairs;
         private float _overlapRatio;
+        private int _boundComponents;      // Day4：成功挂载的组件数
+        private int _bindFailedComponents; // Day4：绑定失败数（类型找不到/添加/装配异常）
         private float _startTime;
 
         /// <summary> 已实例化物体（供 Day2 布局阶段重叠检测/分离） </summary>
@@ -43,10 +48,13 @@ namespace AILevelGenerator.Editor.Builders
         private const int MaxLayoutRounds = 10;
 
         /// <param name="rollbackManager">回滚管理器（可选）：取消/失败时经其分帧删除本次生成根；null 退回同步自删（向后兼容）</param>
-        public SceneLevelBuilder(IResourceMapper resourceMapper, IRollbackManager rollbackManager = null)
+        /// <param name="componentBinder">组件绑定器（可选，Day4）：实例化后按逻辑名挂载逻辑组件；null = 不绑定（向后兼容）</param>
+        public SceneLevelBuilder(IResourceMapper resourceMapper, IRollbackManager rollbackManager = null,
+            ComponentBinder componentBinder = null)
         {
             _resourceMapper = resourceMapper;
             _rollbackManager = rollbackManager;
+            _componentBinder = componentBinder;
         }
 
         public bool IsBuilding => _tcs != null && !_tcs.Task.IsCompleted;
@@ -72,6 +80,8 @@ namespace AILevelGenerator.Editor.Builders
             _groundFittedCount = 0;
             _resolvedOverlapPairs = 0;
             _overlapRatio = 0f;
+            _boundComponents = 0;
+            _bindFailedComponents = 0;
             _instances.Clear();
             _startTime = (float)EditorApplication.timeSinceStartup;
 
@@ -172,7 +182,8 @@ namespace AILevelGenerator.Editor.Builders
             // —— 阶段 4：收尾 ——
             var buildTime = (float)(EditorApplication.timeSinceStartup - _startTime);
             Finish(LevelBuildResult.Succeeded(_instantiatedCount, _skippedCount, buildTime,
-                _overlapRatio, _resolvedOverlapPairs, _groundFittedCount));
+                _overlapRatio, _resolvedOverlapPairs, _groundFittedCount,
+                _boundComponents, _bindFailedComponents));
         }
 
         /// <summary>
@@ -211,6 +222,14 @@ namespace AILevelGenerator.Editor.Builders
 
                 _instances.Add(instance); // 供布局阶段重叠检测/分离
                 _instantiatedCount++;
+
+                // Day4：实例化后同帧绑定逻辑组件（随分帧节奏推进，不额外占帧；单个失败仅日志不阻塞）
+                if (_componentBinder != null)
+                {
+                    var bindResult = _componentBinder.BindTo(prop.PrefabLogicalName, instance);
+                    _boundComponents += bindResult.BoundCount;
+                    _bindFailedComponents += bindResult.FailedCount;
+                }
             }
             catch (Exception ex)
             {

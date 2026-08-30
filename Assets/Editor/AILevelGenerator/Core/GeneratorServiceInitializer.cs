@@ -1,5 +1,6 @@
 using AILevelGenerator.Editor.Builders;
 using AILevelGenerator.Editor.UI;
+using AILevelGenerator.Runtime.Components;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.LLM;
 using AILevelGenerator.Runtime.Mappings;
@@ -52,9 +53,18 @@ namespace AILevelGenerator.Editor.Core
             var rollbackManager = new RollbackManager();
             ServiceLocator.Register<IRollbackManager>(rollbackManager);
 
+            // 组件绑定器（Day4）：加载默认绑定配置（缺失时仅警告——未配置绑定时构建不挂组件，链路不受影响）
+            var bindingConfig = AssetDatabase.LoadAssetAtPath<ComponentBindingConfig>("Assets/Settings/Bindings/ComponentBinding_Default.asset");
+            if (bindingConfig == null)
+            {
+                UnityEngine.Debug.LogWarning("[AI Generator] 未找到组件绑定配置 Assets/Settings/Bindings/ComponentBinding_Default.asset，实体将不自动挂载逻辑组件");
+            }
+            var componentBinder = new ComponentBinder(bindingConfig);
+
             // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）。
-            // 注入回滚管理器：取消/失败时经其分帧删除本次生成根，不阻塞编辑器。
-            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager));
+            // 注入回滚管理器：取消/失败时经其分帧删除本次生成根，不阻塞编辑器；
+            // 注入组件绑定器：实例化后自动挂载逻辑组件（按逻辑名查绑定配置）。
+            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager, componentBinder));
 
             // 调度器：注入构建器后，生成成功会自动进入分帧构建阶段（构建完成才算整条任务成功）
             var scheduler = new GeneratorScheduler(generator);

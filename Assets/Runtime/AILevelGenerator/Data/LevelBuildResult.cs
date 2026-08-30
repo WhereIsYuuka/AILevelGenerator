@@ -32,10 +32,15 @@ namespace AILevelGenerator.Runtime.Data
         public int ResolvedOverlapPairs;  // 重叠修正的对数
         public int GroundFittedCount;     // 地面贴合成功数
 
+        // —— Day4 组件绑定统计 ——
+        public int BoundComponents;       // 成功挂载并装配的组件数
+        public int BindFailedComponents;  // 绑定失败数（类型找不到/添加/装配异常）
+
         public bool IsSuccess => Status == LevelBuildStatus.Succeeded;
 
         public static LevelBuildResult Succeeded(int instantiated, int skipped, float buildTime,
-            float overlapRatio = 0f, int resolvedPairs = 0, int groundFitted = 0) => new()
+            float overlapRatio = 0f, int resolvedPairs = 0, int groundFitted = 0,
+            int boundComponents = 0, int bindFailed = 0) => new()
         {
             Status = LevelBuildStatus.Succeeded,
             InstantiatedCount = instantiated,
@@ -43,7 +48,9 @@ namespace AILevelGenerator.Runtime.Data
             BuildTime = buildTime,
             OverlapRatio = overlapRatio,
             ResolvedOverlapPairs = resolvedPairs,
-            GroundFittedCount = groundFitted
+            GroundFittedCount = groundFitted,
+            BoundComponents = boundComponents,
+            BindFailedComponents = bindFailed
         };
 
         public static LevelBuildResult Failed(string message, int instantiated = 0) => new()

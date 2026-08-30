@@ -30,6 +30,8 @@ namespace AILevelGenerator.Editor.UI
         private IntegerField _seedField;
         private TextField _inputField;
         private Button _generateBtn;
+        private Button _cancelBtn;
+        private ProgressBar _progressBar;
         private Button _clearLogBtn;
         private ScrollView _logScroll;
         private Label _logContent;
@@ -44,8 +46,9 @@ namespace AILevelGenerator.Editor.UI
 
         // 调度链路（经 ServiceLocator 获取，窗口不 new 任何具体业务类）
         private IGeneratorScheduler _scheduler;
-        private bool _stateSubscribed; // CreateGUI 会被多次调用，防止重复订阅 StateChanged
-        
+        private ILevelBuilder _levelBuilder; // Day3：订阅 ProgressChanged 驱动进度条实时刷新
+        // 注：状态/进度订阅不设防重标志——CreateGUI 会多次调用，但 C# 事件对同一方法组委托
+        // 自动去重；且若 ServiceLocator 实例被覆盖注册，旧订阅会失效，每次 CreateGUI 须对当前实例重订阅。
         private readonly List<string> _logEntries = new List<string>(); // 内存缓存，避免字符串频繁拼接
         private const int MaxLogEntries = 500; // 防止内存泄漏
 
@@ -91,6 +94,8 @@ namespace AILevelGenerator.Editor.UI
             _seedField = rootVisualElement.Q<IntegerField>("seed-field");
             _inputField = rootVisualElement.Q<TextField>("input-field");
             _generateBtn = rootVisualElement.Q<Button>("generate-button");
+            _cancelBtn = rootVisualElement.Q<Button>("cancel-button");
+            _progressBar = rootVisualElement.Q<ProgressBar>("progress-bar");
             _clearLogBtn = rootVisualElement.Q<Button>("clear-log-button");
             _logScroll = rootVisualElement.Q<ScrollView>("log-scroll");
             _logContent = rootVisualElement.Q<Label>("log-content");
@@ -144,9 +149,17 @@ namespace AILevelGenerator.Editor.UI
         private void RegisterEvents()
         {
             _generateBtn.clicked += OnGenerateClicked;
+            if (_cancelBtn != null) _cancelBtn.clicked += OnCancelClicked;
             _clearLogBtn.clicked += OnClearLogClicked;
             if (_saveKeyBtn != null) _saveKeyBtn.clicked += OnSaveApiKeyClicked;
             if (_testConnectionBtn != null) _testConnectionBtn.clicked += OnTestConnectionClicked;
+        }
+
+        /// <summary> 取消生成：转发调度器（构建阶段分帧清理本次物体，生成阶段丢弃结果） </summary>
+        private void OnCancelClicked()
+        {
+            LogWarning("用户点击取消生成");
+            _scheduler?.CancelGeneration();
         }
 
         /// <summary> 保存 API Key：写 EditorPrefs + 即时更新已注册客户端（无需重载域） </summary>
@@ -282,13 +295,29 @@ namespace AILevelGenerator.Editor.UI
 
             _scheduler.SetLogger(this); // 窗口即日志宿主
 
-            if (!_stateSubscribed)
-            {
-                _scheduler.StateChanged += OnSchedulerStateChanged;
-                _stateSubscribed = true;
-            }
+            // 订阅状态变更（C# 事件对同一方法组委托自动去重，CreateGUI 多次调用不会重复订阅）
+            _scheduler.StateChanged += OnSchedulerStateChanged;
+
+            // Day3：订阅构建进度（构建器经 ServiceLocator 获取，窗口不 new 业务类）。
+            // 每次 CreateGUI 都对当前 ServiceLocator 实例重订阅——覆盖注册后旧订阅失效，防陈旧订阅。
+            _levelBuilder = ServiceLocator.Get<ILevelBuilder>();
+            if (_levelBuilder != null)
+                _levelBuilder.ProgressChanged += OnBuildProgress;
 
             OnSchedulerStateChanged(_scheduler.CurrentState); // 初始渲染
+        }
+
+        /// <summary>
+        /// 构建进度回调（Day3）：分帧构建期间实时刷新进度条。
+        /// 构建器在 Editor 主线程触发（EditorCoroutine 处于 update 循环内），UI Toolkit 允许直接赋值、
+        /// 渲染在下一帧生效——不依赖 delayCall（编辑器繁忙/MCP 桥接轮询时 delayCall 会滞后，进度条卡顿）。
+        /// </summary>
+        private void OnBuildProgress(float progress)
+        {
+            if (this == null || _progressBar == null) return;
+            var p = Mathf.Clamp01(progress);
+            _progressBar.value = p * 100f;
+            _progressBar.title = $"构建中 {p:P0}";
         }
 
         /// <summary>
@@ -311,6 +340,19 @@ namespace AILevelGenerator.Editor.UI
 
             if (_generateBtn != null)
                 _generateBtn.SetEnabled(!_scheduler.IsBusy); // 生成中禁用，防重复提交
+
+            // Day3：进度条与取消按钮仅在生成/构建中显示；任务结束隐藏并归零
+            var busy = state == GenerationTaskState.Generating;
+            if (_progressBar != null)
+            {
+                _progressBar.style.display = busy ? DisplayStyle.Flex : DisplayStyle.None;
+                if (!busy) _progressBar.value = 0f;
+            }
+            if (_cancelBtn != null)
+            {
+                _cancelBtn.style.display = busy ? DisplayStyle.Flex : DisplayStyle.None;
+                _cancelBtn.SetEnabled(busy);
+            }
         }
 
         private void OnClearLogClicked()
@@ -406,13 +448,12 @@ namespace AILevelGenerator.Editor.UI
 
         private void OnDestroy()
         {
-            // 清理延迟回调与状态订阅，防止内存泄露
+            // 清理延迟回调与状态/进度订阅，防止内存泄露（对未订阅的委托 -= 是安全空操作）
             EditorApplication.delayCall -= RenderLogsSafe;
-            if (_scheduler != null && _stateSubscribed)
-            {
+            if (_scheduler != null)
                 _scheduler.StateChanged -= OnSchedulerStateChanged;
-                _stateSubscribed = false;
-            }
+            if (_levelBuilder != null)
+                _levelBuilder.ProgressChanged -= OnBuildProgress;
         }
     }
 }

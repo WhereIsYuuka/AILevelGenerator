@@ -48,8 +48,13 @@ namespace AILevelGenerator.Editor.Core
             ServiceLocator.Register<IDeepSeekClient>(client);
             ServiceLocator.Register<IGenerator>(generator);
 
-            // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）
-            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>()));
+            // 回滚管理器（Day3）：登记生成根物体，取消/失败时经其分帧增量删除（实现体第四周扩展快照兜底）
+            var rollbackManager = new RollbackManager();
+            ServiceLocator.Register<IRollbackManager>(rollbackManager);
+
+            // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）。
+            // 注入回滚管理器：取消/失败时经其分帧删除本次生成根，不阻塞编辑器。
+            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager));
 
             // 调度器：注入构建器后，生成成功会自动进入分帧构建阶段（构建完成才算整条任务成功）
             var scheduler = new GeneratorScheduler(generator);

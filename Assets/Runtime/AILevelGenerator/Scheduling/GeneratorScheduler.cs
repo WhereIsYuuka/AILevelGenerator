@@ -19,6 +19,9 @@ namespace AILevelGenerator.Runtime.Scheduling
         private ILogger _logger;
         private ILevelBuilder _builder; // Day1：生成成功后分帧构建场景（未注入时行为与纯生成链路一致）
 
+        /// <summary> 取消标记（Day3）：LLM 生成阶段取消后置位，结果返回时据此丢弃不进入构建 </summary>
+        private volatile bool _cancelRequested;
+
         public GeneratorScheduler(IGenerator generator)
         {
             _generator = generator ?? throw new ArgumentNullException(nameof(generator));
@@ -43,6 +46,23 @@ namespace AILevelGenerator.Runtime.Scheduling
         /// </summary>
         public void SetBuilder(ILevelBuilder builder) => _builder = builder;
 
+        /// <summary>
+        /// 请求取消当前任务（Day3）：
+        /// 构建阶段 → 转发构建器 Cancel（帧头检查后经 IRollbackManager 分帧清理本次物体）；
+        /// 生成阶段 → 置标记，LLM 结果返回后被丢弃（不进入构建、场景无变更）。
+        /// </summary>
+        public void CancelGeneration()
+        {
+            if (CurrentState != GenerationTaskState.Generating)
+            {
+                _logger?.LogWarning("当前无进行中的生成任务，忽略取消请求");
+                return;
+            }
+            _cancelRequested = true;
+            _builder?.Cancel(); // 构建中：由构建器帧头检查；未构建时置标记无副作用
+            _logger?.LogWarning("已请求取消：正在终止当前生成/构建...");
+        }
+
         public async Task StartGenerationAsync(GenerationRequest request)
         {
             // —— 同步前缀：非抛出式校验（异常不入 catch，语义清晰）——
@@ -58,6 +78,7 @@ namespace AILevelGenerator.Runtime.Scheduling
                 _logger?.LogError("生成请求为空或缺少描述，已取消");
                 return; // 停留在 Ready：调用方 bug 不走状态流转，保持流转表最小
             }
+            _cancelRequested = false; // 新一轮任务：重置取消标记（防止上轮取消污染本轮）
             if (CurrentState is GenerationTaskState.Success or GenerationTaskState.Failed)
                 _stateMachine.TryTransit(GenerationTaskState.Ready); // 新一轮生成前重置
 
@@ -75,6 +96,15 @@ namespace AILevelGenerator.Runtime.Scheduling
                 // 先查状态再流转：防止 Ready→Failed 非法流转被状态机拒绝后状态卡死
                 if (CurrentState == GenerationTaskState.Generating)
                     _stateMachine.TryTransit(GenerationTaskState.Failed);
+                return;
+            }
+
+            // 生成阶段取消（Day3）：LLM 结果返回但用户已取消 → 丢弃结果，不进入构建，场景无任何变更
+            if (_cancelRequested)
+            {
+                if (CurrentState == GenerationTaskState.Generating)
+                    _stateMachine.TryTransit(GenerationTaskState.Failed);
+                _logger?.LogWarning("生成已取消：LLM 结果已丢弃，场景未发生任何变更");
                 return;
             }
 

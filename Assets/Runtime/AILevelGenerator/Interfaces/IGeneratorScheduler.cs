@@ -28,5 +28,13 @@ namespace AILevelGenerator.Runtime.Interfaces
         /// 内部捕获全部异常并转为 Failed 状态，返回的 Task 永不清零（never fault），可安全 fire-and-forget。
         /// </summary>
         Task StartGenerationAsync(GenerationRequest request);
+
+        /// <summary>
+        /// 请求取消当前生成任务（Day3，UI 取消按钮入口）：
+        /// 构建阶段 → 转发构建器 Cancel（分帧删除本次已生成物体，经 IRollbackManager）；
+        /// LLM 生成阶段 → 置取消标记，结果返回后丢弃、不进入构建。
+        /// 无进行中任务时为安全空操作（打提示日志）。
+        /// </summary>
+        void CancelGeneration();
     }
 }

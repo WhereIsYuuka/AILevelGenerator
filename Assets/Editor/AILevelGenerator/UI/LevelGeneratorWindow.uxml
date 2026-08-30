@@ -33,8 +33,10 @@
         </ui:VisualElement>
         <ui:VisualElement class="button-row">
             <ui:Button name="generate-button" text="生成关卡" class="primary-button" style="font-size: 13px;"/>
+            <ui:Button name="cancel-button" text="取消生成" class="cancel-button" style="font-size: 13px; display: none;"/>
             <ui:Button name="clear-log-button" text="清空日志" class="secondary-button" style="font-size: 13px;"/>
         </ui:VisualElement>
+        <ui:ProgressBar name="progress-bar" title="等待任务" low-value="0" high-value="100" class="progress-bar" style="display: none; height: 18px;"/>
         <ui:VisualElement class="section log-section">
             <ui:Label text="运行日志" class="section-title"/>
             <ui:ScrollView name="log-scroll" class="log-scroll">

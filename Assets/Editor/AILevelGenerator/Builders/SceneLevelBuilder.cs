@@ -21,6 +21,7 @@ namespace AILevelGenerator.Editor.Builders
     public class SceneLevelBuilder : ILevelBuilder
     {
         private readonly IResourceMapper _resourceMapper;
+        private readonly IRollbackManager _rollbackManager; // Day3：取消清理统一经回滚管理器（分帧删除），null 退回自删
 
         private LevelBuildOptions _options;
         private FrameBudgetCalculator _budget;
@@ -41,9 +42,11 @@ namespace AILevelGenerator.Editor.Builders
         /// <summary> 布局修正最大迭代轮数（每轮一帧），防止全重叠极端布局无限循环 </summary>
         private const int MaxLayoutRounds = 10;
 
-        public SceneLevelBuilder(IResourceMapper resourceMapper)
+        /// <param name="rollbackManager">回滚管理器（可选）：取消/失败时经其分帧删除本次生成根；null 退回同步自删（向后兼容）</param>
+        public SceneLevelBuilder(IResourceMapper resourceMapper, IRollbackManager rollbackManager = null)
         {
             _resourceMapper = resourceMapper;
+            _rollbackManager = rollbackManager;
         }
 
         public bool IsBuilding => _tcs != null && !_tcs.Task.IsCompleted;
@@ -92,6 +95,7 @@ namespace AILevelGenerator.Editor.Builders
             // —— 阶段 1：Prepare（创建生成根物体） ——
             var rootName = _options.RootNamePrefix + (string.IsNullOrEmpty(levelData.LevelName) ? "Level" : levelData.LevelName);
             _root = new GameObject(rootName);
+            _rollbackManager?.TrackRoot(_root); // 登记本次生成根：取消/失败时经回滚管理器增量删除
             ProgressChanged?.Invoke(0f);
 
             // —— 阶段 2：Instantiating（分帧 + 帧率自适应） ——
@@ -116,8 +120,8 @@ namespace AILevelGenerator.Editor.Builders
                     if (_cancelRequested) break;
                 }
 
-                // 帧末：进度事件（每帧最多一次，避免逐物体刷新 UI）
-                ProgressChanged?.Invoke(index / (float)total);
+                // 帧末：进度事件（每帧最多一次，避免逐物体刷新 UI；实例化占整体 0~80%）
+                ProgressChanged?.Invoke(index / (float)total * 0.8f);
 
                 if (_cancelRequested) break;
                 if (index < total) yield return null; // 未完成 → 下一帧继续
@@ -125,7 +129,7 @@ namespace AILevelGenerator.Editor.Builders
 
             if (_cancelRequested)
             {
-                CleanupRoot(); // 增量取消：删除本次生成的根物体（Day3 起经 IRollbackManager 接口统一执行）
+                RollbackCurrentRoot(); // 增量取消：经 IRollbackManager 分帧删除本次生成的根物体
                 Finish(LevelBuildResult.Cancelled(_instantiatedCount));
                 yield break;
             }
@@ -143,7 +147,7 @@ namespace AILevelGenerator.Editor.Builders
             {
                 if (_cancelRequested)
                 {
-                    CleanupRoot();
+                    RollbackCurrentRoot();
                     Finish(LevelBuildResult.Cancelled(_instantiatedCount));
                     yield break;
                 }
@@ -151,15 +155,19 @@ namespace AILevelGenerator.Editor.Builders
                 _resolvedOverlapPairs += fixedPairs;
                 if (fixedPairs == 0) break; // 已无重叠，收敛
                 rounds++;
+                ProgressChanged?.Invoke(0.8f + 0.1f * rounds / MaxLayoutRounds); // 布局阶段占 80%~90%
                 yield return null; // 每轮一帧：布局修正分帧推进
             }
             _overlapRatio = SceneLayoutProcessor.GetOverlapRatio(_instances);
 
-            // 统一地面贴合（射线级开销，一次完成；无地面/未命中的物体保持原坐标）
-            foreach (var instance in _instances)
+            // 统一地面贴合（射线级开销，一次完成；无地面/未命中的物体保持原坐标）——占 90%~100%
+            for (var k = 0; k < _instances.Count; k++)
             {
-                if (SceneLayoutProcessor.FitToGround(instance, _root.transform)) _groundFittedCount++;
+                if (SceneLayoutProcessor.FitToGround(_instances[k], _root.transform)) _groundFittedCount++;
+                if (k % 10 == 0)
+                    ProgressChanged?.Invoke(0.9f + 0.1f * (k + 1) / _instances.Count); // 每 10 个刷新一次，避免逐物体刷 UI
             }
+            ProgressChanged?.Invoke(1f);
 
             // —— 阶段 4：收尾 ——
             var buildTime = (float)(EditorApplication.timeSinceStartup - _startTime);
@@ -211,7 +219,24 @@ namespace AILevelGenerator.Editor.Builders
             }
         }
 
-        /// <summary> 删除本次生成的根物体（含全部子实例） </summary>
+        /// <summary>
+        /// 取消清理：优先经 IRollbackManager 分帧删除本次根（无卡顿）；
+        /// 未注入时退回同步删除（旧行为，兼容测试/降级场景）。
+        /// </summary>
+        private void RollbackCurrentRoot()
+        {
+            if (_rollbackManager != null)
+            {
+                _rollbackManager.RollbackLastGeneration(); // 删除最近一次登记的根 = 本次 _root
+            }
+            else
+            {
+                CleanupRoot();
+            }
+            _root = null;
+        }
+
+        /// <summary> 同步删除本次生成的根物体（含全部子实例）；仅作为未注入回滚管理器时的兜底 </summary>
         private void CleanupRoot()
         {
             if (_root == null) return;

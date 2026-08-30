@@ -80,6 +80,23 @@
     color: #e0e0e0;
 }
 
+/* 取消生成按钮（生成中才显示，红色警示） */
+.cancel-button {
+    flex: 1;
+    background-color: #b04a4a;
+    color: white;
+    margin-right: 8px; /* 替代 gap */
+}
+
+.cancel-button:hover {
+    background-color: #c05a5a;
+}
+
+/* 构建进度条（生成/构建中显示） */
+.progress-bar {
+    margin-bottom: 12px;
+}
+
 .log-section {
     flex: 1;
     min-height: 150px;

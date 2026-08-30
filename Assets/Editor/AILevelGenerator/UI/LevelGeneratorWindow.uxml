@@ -15,6 +15,17 @@
                 <ui:Label text="生成状态：" class="form-label" style="font-size: 13px;"/>
                 <ui:Label name="status-label" text="待命" class="status-label" style="font-size: 13px;"/>
             </ui:VisualElement>
+            <ui:Foldout name="api-foldout" text="API 设置（DeepSeek）" value="false" style="font-size: 13px;">
+                <ui:VisualElement class="form-row">
+                    <ui:Label text="API Key：" class="form-label" style="font-size: 13px;"/>
+                    <ui:TextField name="api-key-field" is-password-field="true" placeholder-text="已保存 Key 留空即沿用；输入新值可覆盖" class="form-control"/>
+                </ui:VisualElement>
+                <ui:VisualElement class="form-row" style="gap: 6px;">
+                    <ui:Button name="save-key-button" text="保存 Key" class="secondary-button" style="font-size: 13px;"/>
+                    <ui:Button name="test-connection-button" text="测试连接" class="secondary-button" style="font-size: 13px;"/>
+                    <ui:Label name="api-status-label" text="" class="status-label" style="font-size: 12px; flex-grow: 1;"/>
+                </ui:VisualElement>
+            </ui:Foldout>
         </ui:VisualElement>
         <ui:VisualElement class="section">
             <ui:Label text="关卡描述" class="section-title"/>

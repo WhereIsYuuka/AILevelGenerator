@@ -36,6 +36,23 @@ namespace AILevelGenerator.Runtime.Mappings
             }
         }
 
+        /// <summary>
+        /// 全部有效逻辑名（按配置顺序，与精确/模糊匹配的条目筛选规则一致），
+        /// 供 Prompt 资源清单告知 LLM 可输出的物体名，保证 PrefabLogicalName 能命中映射表。
+        /// 跳过 null 条目、空逻辑名、未绑定预制体的条目。
+        /// </summary>
+        public IReadOnlyList<string> GetAllLogicalNames()
+        {
+            var names = new List<string>();
+            if (_config == null || _config.Entries == null) return names;
+            foreach (var entry in _config.Entries)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.LogicalName) || entry.Prefab == null) continue;
+                names.Add(entry.LogicalName);
+            }
+            return names;
+        }
+
         /// <summary> 精确 → 模糊查找；未命中时打警告并返回 null </summary>
         public GameObject GetPrefab(string logicalName)
         {

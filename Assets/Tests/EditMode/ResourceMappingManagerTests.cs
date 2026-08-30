@@ -165,5 +165,23 @@ namespace AILevelGenerator.Tests.EditMode
             Assert.IsTrue(manager.TryGetPrefab("敌人-弓箭手", out var prefab));
             Assert.AreEqual("Enemy_Archer_V2", prefab.name, "精确索引应按配置顺序后写覆盖");
         }
+
+        [Test]
+        public void GetAllLogicalNames_返回全部有效逻辑名_顺序与配置一致()
+        {
+            var manager = CreateManager();
+            var names = manager.GetAllLogicalNames();
+            Assert.AreEqual(new[] { "敌人-弓箭手", "宝箱", "NPC" }, names, "应按配置顺序返回全部有效逻辑名");
+        }
+
+        [Test]
+        public void GetAllLogicalNames_空逻辑名与无预制体条目_被跳过()
+        {
+            _config.Entries.Add(new PrefabMappingEntry { LogicalName = "", Prefab = CreateFake("EmptyName") });
+            _config.Entries.Add(new PrefabMappingEntry { LogicalName = "无预制体", Prefab = null });
+            var manager = CreateManager();
+            var names = manager.GetAllLogicalNames();
+            Assert.AreEqual(new[] { "敌人-弓箭手", "宝箱", "NPC" }, names, "空逻辑名与未绑定预制体的条目不应出现在资源清单中");
+        }
     }
 }

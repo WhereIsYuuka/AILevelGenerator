@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Interfaces;
+using AILevelGenerator.Runtime.Interfaces.Templates;
+using AILevelGenerator.Runtime.LLM;
 using AILevelGenerator.Runtime.Utilities;
 using UnityEditor;
 using UnityEngine;
@@ -31,6 +34,13 @@ namespace AILevelGenerator.Editor.UI
         private ScrollView _logScroll;
         private Label _logContent;
         private Label _statusLabel;
+        private TextField _apiKeyField;
+        private Button _saveKeyBtn;
+        private Button _testConnectionBtn;
+        private Label _apiStatusLabel;
+
+        /// <summary> 模板下拉选项缓存：choices（DisplayName）与模板对象一一对应，index 即模板下标 </summary>
+        private readonly List<LevelTemplate> _templateOptions = new();
 
         // 调度链路（经 ServiceLocator 获取，窗口不 new 任何具体业务类）
         private IGeneratorScheduler _scheduler;
@@ -85,23 +95,131 @@ namespace AILevelGenerator.Editor.UI
             _logScroll = rootVisualElement.Q<ScrollView>("log-scroll");
             _logContent = rootVisualElement.Q<Label>("log-content");
             _statusLabel = rootVisualElement.Q<Label>("status-label");
-            
+            _apiKeyField = rootVisualElement.Q<TextField>("api-key-field");
+            _saveKeyBtn = rootVisualElement.Q<Button>("save-key-button");
+            _testConnectionBtn = rootVisualElement.Q<Button>("test-connection-button");
+            _apiStatusLabel = rootVisualElement.Q<Label>("api-status-label");
+
             // 开启富文本支持，用于显示彩色日志
             _logContent.enableRichText = true;
+
+            // API Key 回填（密码框掩码显示，用户可覆盖后重新保存）
+            if (_apiKeyField != null)
+                _apiKeyField.value = DeepSeekApiKeySettings.GetApiKey();
         }
 
+        /// <summary>
+        /// 初始化模板下拉：从 ITemplateProvider 动态加载关卡模板资产（策划新增资产即出现在下拉，无需改代码）。
+        /// 下拉显示 DisplayName，实际选中的 TemplateId 由 OnGenerateClicked 按 index 从缓存映射。
+        /// </summary>
         private void InitTemplateOptions()
         {
-            // TODO: Day5 改为从 ITemplateProvider 动态加载
-            var templates = new List<string> { "战斗关卡", "收集任务", "解谜关卡", "护送任务" };
-            _templateDropdown.choices = templates;
-            _templateDropdown.index = 0;
+            _templateOptions.Clear();
+            _templateDropdown.choices.Clear();
+
+            var provider = ServiceLocator.Get<ITemplateProvider>();
+            if (provider == null)
+            {
+                LogError("模板提供者未注册（ServiceLocator），请检查 GeneratorServiceInitializer");
+                _generateBtn?.SetEnabled(false);
+                return;
+            }
+
+            foreach (var template in provider.GetLevelTemplates())
+            {
+                if (template == null) continue;
+                _templateOptions.Add(template);
+                _templateDropdown.choices.Add(string.IsNullOrEmpty(template.DisplayName) ? template.TemplateId : template.DisplayName);
+            }
+
+            if (_templateOptions.Count == 0)
+            {
+                LogError("未加载到任何关卡模板资产，请检查 Assets/Settings/Templates/ 目录");
+                _generateBtn?.SetEnabled(false);
+                return;
+            }
+            _templateDropdown.index = 0; // 设置 choices 后必须显式赋值才有初值
         }
 
         private void RegisterEvents()
         {
             _generateBtn.clicked += OnGenerateClicked;
             _clearLogBtn.clicked += OnClearLogClicked;
+            if (_saveKeyBtn != null) _saveKeyBtn.clicked += OnSaveApiKeyClicked;
+            if (_testConnectionBtn != null) _testConnectionBtn.clicked += OnTestConnectionClicked;
+        }
+
+        /// <summary> 保存 API Key：写 EditorPrefs + 即时更新已注册客户端（无需重载域） </summary>
+        private void OnSaveApiKeyClicked()
+        {
+            var key = _apiKeyField?.value?.Trim() ?? string.Empty;
+            DeepSeekApiKeySettings.SaveApiKey(key);
+
+            var client = ServiceLocator.Get<IDeepSeekClient>() as DeepSeekClient;
+            client?.UpdateApiKey(key);
+
+            Log(string.IsNullOrEmpty(key) ? "已清除 API Key" : "API Key 已保存（仅存本机编辑器偏好，不进入项目文件）");
+            SetApiStatus(string.IsNullOrEmpty(key) ? "" : "已保存", false);
+        }
+
+        /// <summary> 测试连接：最小请求调用 DeepSeek，验证 Key 有效性与网络可达 </summary>
+        private async void OnTestConnectionClicked()
+        {
+            var client = ServiceLocator.Get<IDeepSeekClient>();
+            if (client == null)
+            {
+                LogError("DeepSeek 客户端未注册（ServiceLocator），请检查 GeneratorServiceInitializer");
+                return;
+            }
+
+            var key = _apiKeyField?.value?.Trim();
+            if (string.IsNullOrEmpty(key))
+            {
+                LogError("请先输入并保存 API Key 再测试连接");
+                return;
+            }
+            // 测试前同步到客户端（覆盖未保存直接点测试的场景）
+            (client as DeepSeekClient)?.UpdateApiKey(key);
+
+            _testConnectionBtn?.SetEnabled(false);
+            SetApiStatus("连接中...", false);
+            Log($"正在测试连接：{DeepSeekClient.DefaultBaseUrl}");
+
+            try
+            {
+                var response = await client.ChatAsync(new DeepSeekChatRequest
+                {
+                    Messages = new List<AILevelGenerator.Runtime.LLM.DeepSeekMessage>
+                    {
+                        new() { Role = "user", Content = "ping" }
+                    }
+                });
+                var ok = response != null && response.Choices != null && response.Choices.Count > 0;
+                LogSuccess(ok ? "连接成功：DeepSeek API 可正常访问" : "连接成功（返回空响应）");
+                SetApiStatus(ok ? "连接成功" : "返回空响应", true);
+            }
+            catch (DeepSeekException e)
+            {
+                LogError($"连接失败：{e.FriendlyMessage}");
+                SetApiStatus("连接失败", false);
+            }
+            catch (Exception e)
+            {
+                LogError($"连接失败：{e.Message}");
+                SetApiStatus("连接失败", false);
+            }
+            finally
+            {
+                _testConnectionBtn?.SetEnabled(true);
+            }
+        }
+
+        /// <summary> API 状态标签：true=绿色（成功），false=红色（失败） </summary>
+        private void SetApiStatus(string text, bool success)
+        {
+            if (_apiStatusLabel == null) return;
+            _apiStatusLabel.text = text;
+            _apiStatusLabel.style.color = success ? new Color(0.25f, 0.8f, 0.25f) : new Color(1f, 0.32f, 0.32f);
         }
 
         /// <summary>
@@ -109,7 +227,12 @@ namespace AILevelGenerator.Editor.UI
         /// </summary>
         private void OnGenerateClicked()
         {
-            var template = _templateDropdown.value;
+            // 下拉 value 是 DisplayName 字符串，不能直接当 TemplateId；
+            // 优先按 index 从缓存取模板，index 越界时按 DisplayName 反查兜底（防外部修改 choices 失同步）
+            var selected = _templateDropdown.index >= 0 && _templateDropdown.index < _templateOptions.Count
+                ? _templateOptions[_templateDropdown.index]
+                : _templateOptions.Find(t => t.DisplayName == _templateDropdown.value);
+            var templateId = selected?.TemplateId ?? "未指定";
             var input = _inputField.value;
             var seed = _seedField.value;
 
@@ -119,7 +242,14 @@ namespace AILevelGenerator.Editor.UI
                 return;
             }
 
-            Log($"开始生成 - 模板：{template}，种子：{seed}");
+            // 生成前置检查：未配置 Key 直接提示（LLMGenerator 也有 NO_API_KEY 兜底，这里提前拦截体验更好）
+            if (string.IsNullOrWhiteSpace(DeepSeekApiKeySettings.GetApiKey()))
+            {
+                LogError("未配置 DeepSeek API Key，请在「API 设置」中保存后重试");
+                return;
+            }
+
+            Log($"开始生成 - 模板：{selected?.DisplayName ?? "未知"}（{templateId}），种子：{seed}");
             Log($"描述：{input}");
 
             if (_scheduler == null)
@@ -132,7 +262,7 @@ namespace AILevelGenerator.Editor.UI
             _ = _scheduler.StartGenerationAsync(new GenerationRequest
             {
                 Prompt = input,
-                TemplateId = template,
+                TemplateId = templateId,
                 RandomSeed = seed
             });
         }

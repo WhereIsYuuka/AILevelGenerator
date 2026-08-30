@@ -1,3 +1,4 @@
+using AILevelGenerator.Editor.Builders;
 using AILevelGenerator.Editor.UI;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.LLM;
@@ -46,7 +47,14 @@ namespace AILevelGenerator.Editor.Core
 
             ServiceLocator.Register<IDeepSeekClient>(client);
             ServiceLocator.Register<IGenerator>(generator);
-            ServiceLocator.Register<IGeneratorScheduler>(new GeneratorScheduler(generator));
+
+            // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）
+            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>()));
+
+            // 调度器：注入构建器后，生成成功会自动进入分帧构建阶段（构建完成才算整条任务成功）
+            var scheduler = new GeneratorScheduler(generator);
+            scheduler.SetBuilder(ServiceLocator.Get<ILevelBuilder>());
+            ServiceLocator.Register<IGeneratorScheduler>(scheduler);
         }
     }
 }

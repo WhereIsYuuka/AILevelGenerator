@@ -17,6 +17,7 @@ namespace AILevelGenerator.Runtime.Scheduling
         private readonly IGenerator _generator;
         private readonly GenerationTaskStateMachine _stateMachine = new();
         private ILogger _logger;
+        private ILevelBuilder _builder; // Day1：生成成功后分帧构建场景（未注入时行为与纯生成链路一致）
 
         public GeneratorScheduler(IGenerator generator)
         {
@@ -35,6 +36,12 @@ namespace AILevelGenerator.Runtime.Scheduling
         }
 
         public void SetLogger(ILogger logger) => _logger = logger;
+
+        /// <summary>
+        /// 注入场景构建器（可选）：注入后生成成功会自动分帧构建场景，构建成功才算整条任务成功；
+        /// 未注入时保持纯生成链路行为（向后兼容，测试与降级场景）。
+        /// </summary>
+        public void SetBuilder(ILevelBuilder builder) => _builder = builder;
 
         public async Task StartGenerationAsync(GenerationRequest request)
         {
@@ -73,8 +80,16 @@ namespace AILevelGenerator.Runtime.Scheduling
 
             if (result != null && result.Success && (result.Errors == null || result.Errors.Count == 0))
             {
-                _stateMachine.TryTransit(GenerationTaskState.Success);
-                _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}，耗时 {result.GenerationTime:F1}s");
+                if (_builder == null)
+                {
+                    // 未注入构建器：保持纯生成链路行为
+                    _stateMachine.TryTransit(GenerationTaskState.Success);
+                    _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}，耗时 {result.GenerationTime:F1}s");
+                }
+                else
+                {
+                    await BuildSceneAndTransit(result); // 构建纳入 Generating 状态，完成才 Success
+                }
             }
             else
             {
@@ -83,6 +98,38 @@ namespace AILevelGenerator.Runtime.Scheduling
                     ? string.Join("；", result.Errors.Select(e => e.Message))
                     : "生成器未返回成功结果";
                 _logger?.LogError($"生成失败：{summary}");
+            }
+        }
+
+        /// <summary>
+        /// 分帧构建场景（Day1，纳入 Generating 状态）：构建成功 → Success；
+        /// 构建失败/取消/异常 → Failed（已实例化物体的增量清理由构建器负责，Day3 起经 IRollbackManager 统一执行）。
+        /// </summary>
+        private async Task BuildSceneAndTransit(GenerationResult result)
+        {
+            try
+            {
+                var buildResult = await _builder.BuildAsync(result.LevelData);
+                if (buildResult != null && buildResult.IsSuccess)
+                {
+                    _stateMachine.TryTransit(GenerationTaskState.Success);
+                    _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}（构建 {buildResult.InstantiatedCount} 个实体，生成 {result.GenerationTime:F1}s + 构建 {buildResult.BuildTime:F1}s）");
+                    return;
+                }
+
+                // 先查状态再流转：防止非法流转被状态机拒绝后状态卡死
+                if (CurrentState != GenerationTaskState.Generating) return;
+                _stateMachine.TryTransit(GenerationTaskState.Failed);
+                if (buildResult?.Status == LevelBuildStatus.Cancelled)
+                    _logger?.LogWarning("生成取消：构建被中止，本次新增物体已清理");
+                else
+                    _logger?.LogError($"生成失败：场景构建失败 - {buildResult?.ErrorMessage ?? "未知错误"}");
+            }
+            catch (Exception ex)
+            {
+                if (CurrentState != GenerationTaskState.Generating) return;
+                _stateMachine.TryTransit(GenerationTaskState.Failed);
+                _logger?.LogError($"生成失败：场景构建异常 - {ex.Message}");
             }
         }
     }

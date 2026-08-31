@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Unity 6 项目（URP 17.5.0）：**AI 关卡生成器** —— 通过 AI（MCP + LLM）在 Unity 编辑器中自动生成关卡的工具项目。当前处于**基础生成链路已打通（Day5），LLM 实现在接入前**的阶段：
 
-- 已实现：数据 DTO（`GenerationRequest/Result`、`LevelData`、`TaskData`）、核心接口（`IGenerator`、`IResourceMapper`、`ITemplateProvider`、`IValidator<T>`、`ILogger`）、模板基类（`LevelTemplate`/`TaskTemplate`）、校验基类（`BaseValidator<T>`）、编辑器主窗口（UI Toolkit）、**资源映射系统**（`PrefabMappingConfig` + `ResourceMappingManager`，含精确/别名/模糊匹配，见下"资源映射系统"）、**调度控制层（Day5）**：生成任务状态机（准备/生成中/成功/失败）+ 异步调度框架（`GeneratorScheduler` + `IGeneratorScheduler` + `ServiceLocator`）+ `MockGenerator` 占位生成器 + 窗口→调度→日志链路（状态行显示、生成中按钮禁用）。EditMode 单元测试 33 个全部通过（状态机 8 + 调度器 11 + ServiceLocator 4 + 资源映射 10）。
-- 未实现（`Assets/Editor/AILevelGenerator/{Builders,Utils}`、`Assets/Editor/CLI/`、`Assets/Runtime/AILevelGenerator/{Entities,Tasks}`、`Assets/GlobalSettings/*`、`Assets/Settings/{GeneratorConfig,Templates}` 均为空占位）：真实 LLM 调用（**替换 [GeneratorServiceInitializer.cs](Assets/Editor/AILevelGenerator/Core/GeneratorServiceInitializer.cs) 中注册的 `MockGenerator` 即可**）、校验器实现、模板配置资产。
+- 已实现：数据 DTO（`GenerationRequest/Result`、`LevelData`、`TaskData`）、核心接口（`IGenerator`、`IResourceMapper`、`ITemplateProvider`、`IValidator<T>`、`ILogger`）、模板基类（`LevelTemplate`/`TaskTemplate`）、校验基类（`BaseValidator<T>`）、编辑器主窗口（UI Toolkit）、**资源映射系统**（`PrefabMappingConfig` + `ResourceMappingManager`，含精确/别名/模糊匹配，见下"资源映射系统"）、**调度控制层（Day5）**：生成任务状态机（准备/生成中/成功/失败）+ 异步调度框架（`GeneratorScheduler` + `IGeneratorScheduler` + `ServiceLocator`）+ `MockGenerator` 占位生成器 + 窗口→调度→日志链路（状态行显示、生成中按钮禁用）、**前置校验体系（第四周-Day2）**：`ValidatorRegistry` 可插拔注册表（阶段+模板+类型三重匹配调度）+ 4 个前置校验器（RequestValidator 输入合法性 / ResourceValidator 资源存在性 / DataBoundsValidator 数值边界 / TemplateScopeValidator 模板范围，每个模板注册自己的校验器）+ 调度器接入（非法输入 100% 拦截；构建失败自动全量回滚）。EditMode 单元测试 **282 个全部通过**。
+- 未实现（`Assets/Editor/AILevelGenerator/{Utils}`、`Assets/Editor/CLI/`、`Assets/Runtime/AILevelGenerator/{Entities,Tasks}`、`Assets/GlobalSettings/*`、`Assets/Settings/Templates` 等为空占位）：三层校验的 Mid/Post 阶段（Day3/4 扩展，`ValidationStage` 枚举已预留）、校验器错误码提示 UI。
 
 ### 程序集（asmdef）结构
 
@@ -31,13 +31,15 @@ Unity 6 项目（URP 17.5.0）：**AI 关卡生成器** —— 通过 AI（MCP +
 
 ```
 窗口点击生成 → GeneratorScheduler.StartGenerationAsync(request)   // 经 ServiceLocator 获取，窗口不 new 业务类
+   → 请求级前置校验（ValidatorRegistry.Run Pre 阶段，输入合法性）  // 非法输入 100% 拦截，停留原状态 + 丢弃快照
    → GenerationTaskStateMachine 状态流转：准备 → 生成中 → 成功/失败（非法流转拒绝，新一轮自动重置）
-   → IGenerator.GenerateAsync()          // 当前为 MockGenerator 占位，Day6 换真实 LLM
+   → IGenerator.GenerateAsync()          // LLMGenerator（DeepSeek 接入）
    → GenerationResult                    // LevelData + List<TaskData> + ValidationError/Warning 列表
+   → 数据级前置校验（Run Pre 阶段，资源存在性/数值边界/模板范围）  // 失败 → 合并进结果转 Failed + 丢弃快照（零变更不 OpenScene）
    → 状态 Success/Failed + 日志输出（状态流转与结果经 ILogger 进窗口日志面板）
-   → IValidator<T>.Validate(data, ValidationContext)   // 泛型校验器（尚未接入调度链）
    → IResourceMapper.GetPrefab(logicalName)            // 逻辑名 → 预制体解耦（含模糊匹配）
-   → 场景实例化（Builder，尚未实现）
+   → 场景构建器分帧实例化（SceneLevelBuilder）；构建失败/异常 → 自动全量回滚（RollbackToSnapshot + ResetToReady）
+   → IValidator<T>.Validate(data, ValidationContext)   // 三层校验体系（Day2 已接入 Pre；Mid/Post 预留）
 ```
 
 **Day5 调度层要点**：状态机/调度器/ServiceLocator/MockGenerator 全部在 `AILevelGenerator.Runtime` 程序集（测试程序集无法引用编辑器预定义程序集，放 Runtime 才能单测）；`[InitializeOnLoad]` 的 [GeneratorServiceInitializer.cs](Assets/Editor/AILevelGenerator/Core/GeneratorServiceInitializer.cs) 负责启动注册；调度器返回的 Task 永不清零（内部全捕获转 Failed），窗口 fire-and-forget；禁止 `.Result/.Wait()`（Editor 同步上下文必死锁）。

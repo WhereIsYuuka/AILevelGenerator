@@ -452,6 +452,9 @@ namespace AILevelGenerator.Editor.UI
                 _cancelBtn.style.display = busy ? DisplayStyle.Flex : DisplayStyle.None;
                 _cancelBtn.SetEnabled(busy);
             }
+
+            // Day2：状态变更后联动回滚按钮（自动回滚已消费快照 → 按钮随快照存在性复位）
+            RefreshRollbackButton();
         }
 
         private void OnClearLogClicked()

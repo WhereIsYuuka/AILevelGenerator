@@ -1,13 +1,16 @@
+using System;
 using AILevelGenerator.Editor.Builders;
 using AILevelGenerator.Editor.Tools;
 using AILevelGenerator.Editor.UI;
 using AILevelGenerator.Runtime.Components;
 using AILevelGenerator.Runtime.Interfaces;
+using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.LLM;
 using AILevelGenerator.Runtime.Mappings;
 using AILevelGenerator.Runtime.Scheduling;
 using AILevelGenerator.Runtime.Templates;
 using AILevelGenerator.Runtime.Utilities;
+using AILevelGenerator.Runtime.Validation;
 using UnityEditor;
 
 namespace AILevelGenerator.Editor.Core
@@ -75,9 +78,23 @@ namespace AILevelGenerator.Editor.Core
             // 注入 NavMesh 烘焙器：构建收尾同步烘焙全局 NavMesh（「烘焙中」提示 + 完成日志 + 场景状态同步）。
             ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager, componentBinder, navMeshBaker));
 
-            // 调度器：注入构建器后，生成成功会自动进入分帧构建阶段（构建完成才算整条任务成功）
-            var scheduler = new GeneratorScheduler(generator);
+            // 校验体系（第四周-Day2）：前置校验注册（输入合法性/资源存在性/数值边界/模板范围），
+            // 调度器接管执行（核心只做调度，校验规则全部在具体校验器内，开闭原则）。
+            // 模板专属校验器：遍历模板资产逐个注册（每个模板可注册自己的校验器），跳过空 TemplateId 模板。
+            var validatorRegistry = new ValidatorRegistry();
+            validatorRegistry.SetServices(ServiceLocator.Get<IResourceMapper>(), ServiceLocator.Get<ITemplateProvider>());
+            validatorRegistry.Register(ValidationStage.Pre, new RequestValidator());
+            validatorRegistry.Register(ValidationStage.Pre, new ResourceValidator());
+            validatorRegistry.Register(ValidationStage.Pre, new DataBoundsValidator());
+            foreach (var t in ServiceLocator.Get<ITemplateProvider>()?.GetLevelTemplates() ?? Array.Empty<LevelTemplate>())
+                if (t is ConfigurableLevelTemplate config && !string.IsNullOrEmpty(config.TemplateId))
+                    validatorRegistry.RegisterForTemplate(config.TemplateId, new TemplateScopeValidator(config));
+
+            // 调度器：注入构建器后，生成成功会自动进入分帧构建阶段（构建完成才算整条任务成功）；
+            // 注入校验注册表（前置校验拦截）+ 场景快照（校验失败清理 / 构建失败自动全量回滚）
+            var scheduler = new GeneratorScheduler(generator, validatorRegistry);
             scheduler.SetBuilder(ServiceLocator.Get<ILevelBuilder>());
+            scheduler.SetSnapshotManager(SceneSnapshotManager.Instance);
             ServiceLocator.Register<IGeneratorScheduler>(scheduler);
         }
     }

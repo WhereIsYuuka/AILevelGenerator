@@ -1,4 +1,5 @@
 using AILevelGenerator.Editor.Builders;
+using AILevelGenerator.Editor.Tools;
 using AILevelGenerator.Editor.UI;
 using AILevelGenerator.Runtime.Components;
 using AILevelGenerator.Runtime.Interfaces;
@@ -52,6 +53,10 @@ namespace AILevelGenerator.Editor.Core
             // 回滚管理器（Day3）：登记生成根物体，取消/失败时经其分帧增量删除（实现体第四周扩展快照兜底）
             var rollbackManager = new RollbackManager();
             ServiceLocator.Register<IRollbackManager>(rollbackManager);
+
+            // 场景级快照（第四周-Day1）：生成前保存场景副本，全量回滚时 OpenScene 原子还原。
+            // 与 IRollbackManager 互为两级回滚体系：增量 = 物体级分帧删除；全量 = 场景文件级原子还原。
+            ServiceLocator.Register<ISceneSnapshotManager>(SceneSnapshotManager.Instance);
 
             // 组件绑定器（Day4）：加载默认绑定配置（缺失时仅警告——未配置绑定时构建不挂组件，链路不受影响）
             var bindingConfig = AssetDatabase.LoadAssetAtPath<ComponentBindingConfig>("Assets/Settings/Bindings/ComponentBinding_Default.asset");

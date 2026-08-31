@@ -40,6 +40,8 @@ namespace AILevelGenerator.Editor.UI
         private Button _saveKeyBtn;
         private Button _testConnectionBtn;
         private Label _apiStatusLabel;
+        private Toggle _autoRunToggle; // Day6 联调：生成成功后自动进入播放模式（勾选后开启）
+        private Button _rollbackBtn;   // 第四周-Day1：回滚到生成前快照（场景级）
 
         /// <summary> 模板下拉选项缓存：choices（DisplayName）与模板对象一一对应，index 即模板下标 </summary>
         private readonly List<LevelTemplate> _templateOptions = new();
@@ -47,6 +49,7 @@ namespace AILevelGenerator.Editor.UI
         // 调度链路（经 ServiceLocator 获取，窗口不 new 任何具体业务类）
         private IGeneratorScheduler _scheduler;
         private ILevelBuilder _levelBuilder; // Day3：订阅 ProgressChanged 驱动进度条实时刷新
+        private GenerationTaskState _previousState = GenerationTaskState.Ready; // Day6：自动运行判别用（生成中→成功才触发）
         // 注：状态/进度订阅不设防重标志——CreateGUI 会多次调用，但 C# 事件对同一方法组委托
         // 自动去重；且若 ServiceLocator 实例被覆盖注册，旧订阅会失效，每次 CreateGUI 须对当前实例重订阅。
         private readonly List<string> _logEntries = new List<string>(); // 内存缓存，避免字符串频繁拼接
@@ -84,7 +87,10 @@ namespace AILevelGenerator.Editor.UI
 
             // 6. 渲染已有日志（窗口重绘时保留）
             RenderLogs();
-            
+
+            // 7. 回滚按钮状态与快照存在性联动（无快照时禁用）
+            RefreshRollbackButton();
+
             Log("工具初始化完成");
         }
 
@@ -104,6 +110,8 @@ namespace AILevelGenerator.Editor.UI
             _saveKeyBtn = rootVisualElement.Q<Button>("save-key-button");
             _testConnectionBtn = rootVisualElement.Q<Button>("test-connection-button");
             _apiStatusLabel = rootVisualElement.Q<Label>("api-status-label");
+            _autoRunToggle = rootVisualElement.Q<Toggle>("auto-run-toggle");
+            _rollbackBtn = rootVisualElement.Q<Button>("rollback-button");
 
             // 开启富文本支持，用于显示彩色日志
             _logContent.enableRichText = true;
@@ -153,6 +161,7 @@ namespace AILevelGenerator.Editor.UI
             _clearLogBtn.clicked += OnClearLogClicked;
             if (_saveKeyBtn != null) _saveKeyBtn.clicked += OnSaveApiKeyClicked;
             if (_testConnectionBtn != null) _testConnectionBtn.clicked += OnTestConnectionClicked;
+            if (_rollbackBtn != null) _rollbackBtn.clicked += OnRollbackClicked;
         }
 
         /// <summary> 取消生成：转发调度器（构建阶段分帧清理本次物体，生成阶段丢弃结果） </summary>
@@ -255,6 +264,14 @@ namespace AILevelGenerator.Editor.UI
                 return;
             }
 
+            // Day6 边界：播放模式中禁止生成——退出播放会重置运行时场景数据（编辑期实例被丢弃），
+            // 且运行时 NavMesh 与编辑器数据边界不清。生成只发生在编辑期。
+            if (EditorApplication.isPlaying)
+            {
+                LogError("播放模式中禁止生成关卡，请先停止播放（停止按钮 / Esc）");
+                return;
+            }
+
             // 生成前置检查：未配置 Key 直接提示（LLMGenerator 也有 NO_API_KEY 兜底，这里提前拦截体验更好）
             if (string.IsNullOrWhiteSpace(DeepSeekApiKeySettings.GetApiKey()))
             {
@@ -271,6 +288,13 @@ namespace AILevelGenerator.Editor.UI
                 return;
             }
 
+            // 第四周-Day1：生成前创建场景级快照（供「回滚到快照」全量还原）。
+            // 失败仅警告不阻塞生成——取消/失败路径仍有增量回滚（IRollbackManager 分帧删除）兜底。
+            var snapshotService = ServiceLocator.Get<ISceneSnapshotManager>();
+            if (snapshotService != null && !snapshotService.CreateSnapshot())
+                LogWarning("场景快照创建失败（如场景未保存），本次生成将无「回滚到快照」能力，取消/失败仍会增量清理本次物体");
+            RefreshRollbackButton();
+
             // fire-and-forget：调度器内部捕获全部异常并转为 Failed 状态，返回的 Task 永不清零，可安全丢弃
             _ = _scheduler.StartGenerationAsync(new GenerationRequest
             {
@@ -279,6 +303,70 @@ namespace AILevelGenerator.Editor.UI
                 RandomSeed = seed
             });
         }
+
+        /// <summary>
+        /// 回滚按钮点击（第四周-Day1）：全量回滚到生成前快照。
+        /// 前置校验：快照存在 / 非播放模式（管理器内部） / 非生成中（生成协程未结束前禁止换场景）。
+        /// 成功路径：管理器完成场景还原（OpenScene + 回写 + 重烘焙 + 删临时文件）后，
+        /// 复位状态机（事件链驱动状态行/进度条/按钮复位）+ 清日志 + 追加回滚提示。
+        /// </summary>
+        private void OnRollbackClicked()
+        {
+            var snapshot = ServiceLocator.Get<ISceneSnapshotManager>();
+            if (snapshot == null)
+            {
+                LogError("快照服务未注册（ServiceLocator），回滚不可用");
+                return;
+            }
+            if (!snapshot.HasSnapshot)
+            {
+                LogWarning("当前没有生成前快照，无法回滚（点击「生成关卡」会自动创建快照）");
+                return;
+            }
+            if (_scheduler == null || _scheduler.IsBusy)
+            {
+                LogWarning("生成进行中禁止回滚，请等待完成或先取消");
+                return;
+            }
+
+            LogWarning("正在回滚到生成前快照（场景将整体恢复到快照时刻）...");
+            if (snapshot.RollbackToSnapshot())
+            {
+                _scheduler.ResetToReady(); // 状态机强制复位（事件链自动刷新状态行/进度条/生成按钮）
+                ResetUiState("已回滚到生成前快照：场景已恢复至快照时刻，无残留");
+            }
+            else
+            {
+                LogError("回滚失败（原场景文件未被改写，可继续工作），详见 Console 日志");
+            }
+        }
+
+        /// <summary>
+        /// 回滚后界面重置（公开，供菜单等外部回滚入口复用）：
+        /// 清空日志面板 + 按调度器当前状态重放一次渲染（状态行/进度条/按钮复位）+ 追加提示日志。
+        /// </summary>
+        public void ResetUiState(string message = null)
+        {
+            if (this == null) return;
+            OnClearLogClicked();
+            OnSchedulerStateChanged(_scheduler?.CurrentState ?? GenerationTaskState.Ready);
+            if (!string.IsNullOrEmpty(message)) LogSuccess(message);
+            RefreshRollbackButton();
+        }
+
+        /// <summary> 回滚按钮可用状态与快照存在性联动（无快照时禁用并提示） </summary>
+        private void RefreshRollbackButton()
+        {
+            if (_rollbackBtn == null) return;
+            var hasSnapshot = ServiceLocator.Get<ISceneSnapshotManager>()?.HasSnapshot == true;
+            _rollbackBtn.SetEnabled(hasSnapshot);
+            _rollbackBtn.tooltip = hasSnapshot
+                ? "回滚到生成前快照：整体恢复层级/组件/NavMesh 至快照时刻，无残留"
+                : "无可用快照：点击「生成关卡」会自动创建生成前快照";
+        }
+
+        /// <summary> 公开的按钮状态刷新入口（菜单等外部快照操作后联动窗口，不清日志） </summary>
+        public void RefreshSnapshotButton() => RefreshRollbackButton();
 
         /// <summary>
         /// 从 ServiceLocator 获取调度器并接线：注入日志宿主、订阅状态变更、渲染初始状态
@@ -326,6 +414,17 @@ namespace AILevelGenerator.Editor.UI
         private void OnSchedulerStateChanged(GenerationTaskState state)
         {
             if (this == null || _statusLabel == null) return; // 窗口销毁后回调保护
+
+            // Day6 联调：勾选「生成后自动运行」且本轮真实从生成中 → 成功时，自动进入播放模式
+            // 验证"输入→生成→构建→运行"全链路。用 _previousState 判别（仅本次任务触发的成功才自动运行，
+            // 防止窗口重开/回放旧状态时误触发）；EnterPlaymode 即用户手动点击 Play，安全。
+            if (state == GenerationTaskState.Success && _previousState == GenerationTaskState.Generating
+                && _autoRunToggle != null && _autoRunToggle.value)
+            {
+                LogSuccess("生成完成，自动进入播放模式验证运行效果...");
+                EditorApplication.EnterPlaymode();
+            }
+            _previousState = state;
 
             var (text, color) = state switch
             {
@@ -394,19 +493,13 @@ namespace AILevelGenerator.Editor.UI
                 formatted = $"[{timestamp}] [{level}] {message}";
 
             _logEntries.Add(formatted);
-            
+
             // 防止内存溢出
             if (_logEntries.Count > MaxLogEntries)
                 _logEntries.RemoveAt(0);
 
-            // 只在编辑器空闲时刷新 UI（性能优化）
-            EditorApplication.delayCall += RenderLogsSafe;
-        }
-
-        private void RenderLogsSafe()
-        {
-            // 安全校验：窗口若已销毁，直接跳过
-            if (this == null || _logContent == null) return;
+            // 同步渲染（同 OnBuildProgress 经验）：MCP 桥接/编辑器繁忙时 delayCall 不保证触发，
+            // 曾出现"缓存有条目但日志面板空白"（回滚后提示缺失）。日志为低频操作，直接渲染成本可忽略。
             RenderLogs();
         }
 
@@ -448,8 +541,7 @@ namespace AILevelGenerator.Editor.UI
 
         private void OnDestroy()
         {
-            // 清理延迟回调与状态/进度订阅，防止内存泄露（对未订阅的委托 -= 是安全空操作）
-            EditorApplication.delayCall -= RenderLogsSafe;
+            // 清理状态/进度订阅，防止内存泄露（对未订阅的委托 -= 是安全空操作）
             if (_scheduler != null)
                 _scheduler.StateChanged -= OnSchedulerStateChanged;
             if (_levelBuilder != null)

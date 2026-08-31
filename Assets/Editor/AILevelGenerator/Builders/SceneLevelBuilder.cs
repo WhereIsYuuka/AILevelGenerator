@@ -105,7 +105,37 @@ namespace AILevelGenerator.Editor.Builders
             _cancelRequested = true;
         }
 
+        /// <summary>
+        /// 构建主协程（Day6 异常兜底）。C# 限制：try+catch 块内不能 yield（CS1626），
+        /// 故采用"驱动循环"模式——手动推进子协程，异常在驱动层捕获（catch 不包裹任何 yield）。
+        /// 兜底必要性：EditorCoroutine 捕获协程异常只 LogError 并停止，不会调用 Finish——
+        /// 若不在此收尾，_tcs 永不清零，调度器 await 永不完成，状态机卡死在 Generating（按钮永久禁用）。
+        /// </summary>
         private IEnumerator BuildRoutine(LevelData levelData)
+        {
+            var routine = BuildRoutineCore(levelData);
+            while (true)
+            {
+                bool moveNext;
+                try
+                {
+                    moveNext = routine.MoveNext();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[AI Generator] 构建阶段异常：{ex.Message}\n{ex.StackTrace}");
+                    // 异常时同样执行增量清理（本次生成根），结果按 Failed 返回，任务正常终结
+                    try { RollbackCurrentRoot(); }
+                    catch (Exception rollbackEx) { Debug.LogWarning($"[AI Generator] 异常后清理失败：{rollbackEx.Message}"); }
+                    Finish(LevelBuildResult.Failed($"构建阶段异常：{ex.Message}", _instantiatedCount));
+                    yield break;
+                }
+                if (!moveNext) yield break;
+                yield return routine.Current;
+            }
+        }
+
+        private IEnumerator BuildRoutineCore(LevelData levelData)
         {
             // —— 阶段 1：Prepare（创建生成根物体） ——
             var rootName = _options.RootNamePrefix + (string.IsNullOrEmpty(levelData.LevelName) ? "Level" : levelData.LevelName);
@@ -135,8 +165,10 @@ namespace AILevelGenerator.Editor.Builders
                     if (_cancelRequested) break;
                 }
 
-                // 帧末：进度事件（每帧最多一次，避免逐物体刷新 UI；实例化占整体 0~80%）
-                ProgressChanged?.Invoke(index / (float)total * 0.8f);
+                // 帧末：进度事件（每帧最多一次，避免逐物体刷新 UI；实例化占整体 0~80%）。
+                // Day6 边界：total==0（空实体请求）时 0/0 为 NaN，进度条/日志会收到非法值——跳过
+                if (total > 0)
+                    ProgressChanged?.Invoke(index / (float)total * 0.8f);
 
                 if (_cancelRequested) break;
                 if (index < total) yield return null; // 未完成 → 下一帧继续
@@ -205,6 +237,14 @@ namespace AILevelGenerator.Editor.Builders
                 if (prop == null || string.IsNullOrWhiteSpace(prop.PrefabLogicalName))
                 {
                     _skippedCount++;
+                    return;
+                }
+                // Day6 边界：非有限坐标（NaN/Infinity）会让 Transform 进入非法状态，
+                // 后续布局/烘焙阶段产生 NaN 传染——直接跳过并记日志，不中断整轮构建
+                if (!IsFinite(prop.Position) || !IsFinite(prop.Rotation) || !IsFinite(prop.Scale))
+                {
+                    _skippedCount++;
+                    Debug.LogWarning($"[AI Generator] 位置/旋转/缩放含非有限值，跳过：{prop.PrefabLogicalName}");
                     return;
                 }
                 if (_resourceMapper == null || !_resourceMapper.TryGetPrefab(prop.PrefabLogicalName, out var prefab) || prefab == null)
@@ -294,6 +334,9 @@ namespace AILevelGenerator.Editor.Builders
             }
             _root = null;
         }
+
+        /// <summary> 坐标/旋转/缩放有限性检查（NaN/Infinity 拒绝）：float.IsFinite 需 .NET Standard 2.1+，Unity 2022+ 可用 </summary>
+        private static bool IsFinite(Vector3 v) => float.IsFinite(v.x) && float.IsFinite(v.y) && float.IsFinite(v.z);
 
         /// <summary> 同步删除本次生成的根物体（含全部子实例）；仅作为未注入回滚管理器时的兜底 </summary>
         private void CleanupRoot()

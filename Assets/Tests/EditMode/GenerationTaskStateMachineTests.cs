@@ -107,5 +107,52 @@ namespace AILevelGenerator.Tests.EditMode
                 new[] { GenerationTaskState.Generating, GenerationTaskState.Success, GenerationTaskState.Ready },
                 events);
         }
+
+        // —— 第四周-Day1：ForceReset（场景级回滚后强制复位，绕过合法流转表） ——
+
+        [Test]
+        public void ForceReset_任意状态强制回到准备()
+        {
+            foreach (var state in new[] { GenerationTaskState.Generating, GenerationTaskState.Success, GenerationTaskState.Failed })
+            {
+                var machine = new GenerationTaskStateMachine();
+                if (state == GenerationTaskState.Generating)
+                    machine.TryTransit(state);
+                else
+                {
+                    machine.TryTransit(GenerationTaskState.Generating);
+                    machine.TryTransit(state);
+                }
+
+                machine.ForceReset();
+                Assert.AreEqual(GenerationTaskState.Ready, machine.CurrentState, $"状态 {state} 应被强制复位");
+            }
+        }
+
+        [Test]
+        public void ForceReset_触发一次事件且参数为准备()
+        {
+            var machine = new GenerationTaskStateMachine();
+            machine.TryTransit(GenerationTaskState.Generating);
+            var events = new List<GenerationTaskState>();
+            machine.StateChanged += s => events.Add(s);
+
+            machine.ForceReset();
+
+            Assert.AreEqual(new[] { GenerationTaskState.Ready }, events, "ForceReset 应恰好触发一次事件，参数为 Ready");
+        }
+
+        [Test]
+        public void ForceReset_已在准备时_不发事件()
+        {
+            var machine = new GenerationTaskStateMachine();
+            var fired = false;
+            machine.StateChanged += _ => fired = true;
+
+            machine.ForceReset();
+
+            Assert.IsFalse(fired, "已在 Ready 时 ForceReset 应为 no-op");
+            Assert.AreEqual(GenerationTaskState.Ready, machine.CurrentState);
+        }
     }
 }

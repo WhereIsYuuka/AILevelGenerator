@@ -22,6 +22,13 @@ namespace AILevelGenerator.Runtime.Interfaces
         /// </summary>
         void RollbackLastGeneration();
 
+        /// <summary>
+        /// 增量删除全部已登记生成根（第四周-Day1，分帧逐个删除）。
+        /// 与 RollbackLastGeneration（取消：仅最近一次）并存，用于"清空全部生成"；
+        /// 场景级快照回滚（ISceneSnapshotManager）是更彻底的全量手段，两者互为两级回滚体系。
+        /// </summary>
+        void RollbackAllGenerated();
+
         /// <summary> 清理全部登记（会话重置/生成器重载；第四周扩展为快照级回滚兜底） </summary>
         void ClearAllTracked();
     }

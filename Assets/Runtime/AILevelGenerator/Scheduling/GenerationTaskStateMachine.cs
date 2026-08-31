@@ -27,6 +27,19 @@ namespace AILevelGenerator.Runtime.Scheduling
             return true;
         }
 
+        /// <summary>
+        /// 强制复位到 Ready（第四周-Day1：场景级回滚后统一重置）。
+        /// 与 TryTransit 不同：绕过合法流转表（任意状态 → Ready）；已在 Ready 时为 no-op（不发事件）。
+        /// 注意：调用方须自行保证生成协程已结束（场景级回滚入口已做 IsBusy 校验）；
+        /// 若协程仍在跑，其后续 TryTransit 会被流转表拒绝，状态不会卡死。
+        /// </summary>
+        public void ForceReset()
+        {
+            if (CurrentState == GenerationTaskState.Ready) return;
+            CurrentState = GenerationTaskState.Ready;
+            StateChanged?.Invoke(GenerationTaskState.Ready);
+        }
+
         private static bool IsValidTransition(GenerationTaskState from, GenerationTaskState to)
         {
             switch (from)

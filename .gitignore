@@ -113,3 +113,8 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# 第四周-Day1：场景级快照临时文件（Assets/Temp 下，回滚后即删除，防残留入库；
+# Assets/Temp.meta 为空目录 meta 一并忽略——空目录无法被 git 跟踪，避免该 meta 永久停留在未跟踪状态）
+/[Aa]ssets/[Tt]emp/
+/[Aa]ssets/[Tt]emp.meta

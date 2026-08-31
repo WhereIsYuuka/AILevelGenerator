@@ -36,5 +36,11 @@ namespace AILevelGenerator.Runtime.Interfaces
         /// 无进行中任务时为安全空操作（打提示日志）。
         /// </summary>
         void CancelGeneration();
+
+        /// <summary>
+        /// 强制复位到 Ready（第四周-Day1：场景级回滚后重置状态机，事件链驱动窗口 UI 复位）。
+        /// 调用方须保证生成/构建协程已结束（回滚入口已做 IsBusy 校验）。
+        /// </summary>
+        void ResetToReady();
     }
 }

@@ -32,6 +32,12 @@ namespace AILevelGenerator.Runtime.Scheduling
         /// <summary> 生成中即为忙碌，此时拒绝新的生成请求 </summary>
         public bool IsBusy => CurrentState == GenerationTaskState.Generating;
 
+        /// <summary>
+        /// 强制复位到 Ready（第四周-Day1：场景级回滚后重置状态机，事件链驱动窗口 UI 复位）。
+        /// 调用方须保证生成/构建协程已结束（回滚入口已做 IsBusy 校验）。
+        /// </summary>
+        public void ResetToReady() => _stateMachine.ForceReset();
+
         public event Action<GenerationTaskState> StateChanged
         {
             add => _stateMachine.StateChanged += value;

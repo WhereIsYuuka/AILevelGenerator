@@ -26,6 +26,9 @@
                     <ui:Label name="api-status-label" text="" class="status-label" style="font-size: 12px; flex-grow: 1;"/>
                 </ui:VisualElement>
             </ui:Foldout>
+            <ui:VisualElement class="form-row">
+                <ui:Toggle name="auto-run-toggle" label="生成后自动进入播放模式（联调验证）" style="font-size: 13px;"/>
+            </ui:VisualElement>
         </ui:VisualElement>
         <ui:VisualElement class="section">
             <ui:Label text="关卡描述" class="section-title"/>
@@ -35,6 +38,7 @@
             <ui:Button name="generate-button" text="生成关卡" class="primary-button" style="font-size: 13px;"/>
             <ui:Button name="cancel-button" text="取消生成" class="cancel-button" style="font-size: 13px; display: none;"/>
             <ui:Button name="clear-log-button" text="清空日志" class="secondary-button" style="font-size: 13px;"/>
+            <ui:Button name="rollback-button" text="回滚到快照（场景级）" class="secondary-button" style="font-size: 13px;" tooltip="生成前自动创建场景快照；点击后整体恢复到快照时刻（含层级/组件/NavMesh），无残留"/>
         </ui:VisualElement>
         <ui:ProgressBar name="progress-bar" title="等待任务" low-value="0" high-value="100" class="progress-bar" style="display: none; height: 18px;"/>
         <ui:VisualElement class="section log-section">

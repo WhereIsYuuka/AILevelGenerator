@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using UnityEngine;
 
 namespace AILevelGenerator.Runtime.Data
 {
@@ -35,6 +37,10 @@ namespace AILevelGenerator.Runtime.Data
         // —— Day4 组件绑定统计 ——
         public int BoundComponents;       // 成功挂载并装配的组件数
         public int BindFailedComponents;  // 绑定失败数（类型找不到/添加/装配异常）
+
+        // —— 第四周-Day3 后置校验输入 ——
+        /// <summary> 本次生成的全部实体清单（构建器 Finish 前填充 _instances），供调度器 Post 校验读取 </summary>
+        public List<GameObject> BuiltObjects;
 
         public bool IsSuccess => Status == LevelBuildStatus.Succeeded;
 

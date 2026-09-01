@@ -1,11 +1,13 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using AILevelGenerator.Runtime.Components;
 using AILevelGenerator.Runtime.Data;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Utilities;
+using AILevelGenerator.Runtime.Validation;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -28,6 +30,8 @@ namespace AILevelGenerator.Editor.Builders
         private readonly ComponentBinder _componentBinder; // Day4：实例化后自动挂载逻辑组件，null = 不绑定（向后兼容）
         private readonly NavMeshBaker _navMeshBaker; // Day5：收尾同步烘焙全局 NavMesh，null = 不烘焙（向后兼容）
         private readonly NavMeshBakeTracker _bakeTracker = new(); // Day5：烘焙状态与文案（日志/进度提示）
+        private readonly ValidatorRegistry _validatorRegistry; // 第四周-Day3：Mid 生成中校验注册表，null = Mid 禁用（向后兼容）
+        private MidValidationAccumulator _midAccumulator; // 第四周-Day3：本构建的 Mid 累积器（增长前缀，全局索引）
 
         private LevelBuildOptions _options;
         private FrameBudgetCalculator _budget;
@@ -53,13 +57,16 @@ namespace AILevelGenerator.Editor.Builders
         /// <param name="rollbackManager">回滚管理器（可选）：取消/失败时经其分帧删除本次生成根；null 退回同步自删（向后兼容）</param>
         /// <param name="componentBinder">组件绑定器（可选，Day4）：实例化后按逻辑名挂载逻辑组件；null = 不绑定（向后兼容）</param>
         /// <param name="navMeshBaker">NavMesh 烘焙器（可选，Day5）：构建收尾同步烘焙全局 NavMesh；null = 不烘焙（向后兼容）</param>
+        /// <param name="validatorRegistry">校验注册表（可选，第四周-Day3）：每帧批次后跑 Mid 生成中校验，失败立即终止构建；null = Mid 禁用（向后兼容）</param>
         public SceneLevelBuilder(IResourceMapper resourceMapper, IRollbackManager rollbackManager = null,
-            ComponentBinder componentBinder = null, NavMeshBaker navMeshBaker = null)
+            ComponentBinder componentBinder = null, NavMeshBaker navMeshBaker = null,
+            ValidatorRegistry validatorRegistry = null)
         {
             _resourceMapper = resourceMapper;
             _rollbackManager = rollbackManager;
             _componentBinder = componentBinder;
             _navMeshBaker = navMeshBaker;
+            _validatorRegistry = validatorRegistry;
         }
 
         public bool IsBuilding => _tcs != null && !_tcs.Task.IsCompleted;
@@ -88,6 +95,7 @@ namespace AILevelGenerator.Editor.Builders
             _boundComponents = 0;
             _bindFailedComponents = 0;
             _instances.Clear();
+            _midAccumulator = _validatorRegistry != null ? new MidValidationAccumulator(_validatorRegistry, levelData) : null;
             _startTime = (float)EditorApplication.timeSinceStartup;
 
             _coroutine = EditorCoroutine.Start(BuildRoutine(levelData));
@@ -171,6 +179,28 @@ namespace AILevelGenerator.Editor.Builders
                     ProgressChanged?.Invoke(index / (float)total * 0.8f);
 
                 if (_cancelRequested) break;
+
+                // 第四周-Day3：生成中校验（Mid）——本帧批次字段/数值范围校验（增长前缀累积，错误路径全局索引）。
+                // 失败 = 数据在 Pre 校验后/构建中被污染（兜底防御）→ 增量清理本次根 + Failed 终结，
+                // 调度器 Failed 分支再触发全量回滚（快照在成功路径保留）——两级兜底齐全。
+                if (_midAccumulator != null)
+                {
+                    var midResult = _midAccumulator.ValidateBatch(props.GetRange(index - frameDone, frameDone));
+                    if (midResult.Warnings.Count > 0)
+                    {
+                        Debug.LogWarning($"[AI Generator] 生成中校验警告：{string.Join("；", midResult.Warnings.Select(w => $"{w.Code}：{w.Message}"))}");
+                    }
+                    if (!midResult.IsValid)
+                    {
+                        var joined = string.Join("；", midResult.Errors.Select(e =>
+                            $"{e.Code}：{e.Message}{(string.IsNullOrEmpty(e.DataPath) ? "" : $"（{e.DataPath}）")}"));
+                        Debug.LogError($"[AI Generator] 生成中校验失败：{joined}");
+                        RollbackCurrentRoot(); // 无快照场景不残留本次生成根（增量清理兜底）
+                        Finish(LevelBuildResult.Failed($"生成中校验失败（Mid）：{joined}", _instantiatedCount));
+                        yield break;
+                    }
+                }
+
                 if (index < total) yield return null; // 未完成 → 下一帧继续
             }
 
@@ -221,9 +251,11 @@ namespace AILevelGenerator.Editor.Builders
 
             // —— 阶段 4：收尾 ——
             var buildTime = (float)(EditorApplication.timeSinceStartup - _startTime);
-            Finish(LevelBuildResult.Succeeded(_instantiatedCount, _skippedCount, buildTime,
+            var result = LevelBuildResult.Succeeded(_instantiatedCount, _skippedCount, buildTime,
                 _overlapRatio, _resolvedOverlapPairs, _groundFittedCount,
-                _boundComponents, _bindFailedComponents));
+                _boundComponents, _bindFailedComponents);
+            result.BuiltObjects = _instances; // 第四周-Day3：填充本次实体完整清单，供调度器 Post 校验读取
+            Finish(result);
         }
 
         /// <summary>

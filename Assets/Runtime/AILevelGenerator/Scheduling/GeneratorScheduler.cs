@@ -202,6 +202,25 @@ namespace AILevelGenerator.Runtime.Scheduling
                 var buildResult = await _builder.BuildAsync(result.LevelData);
                 if (buildResult != null && buildResult.IsSuccess)
                 {
+                    // 第四周-Day3：后置校验（实体空引用/组件完整性/逻辑可达性）。
+                    // 失败即视为构建异常：转 Failed + 自动全量回滚——快照在成功路径保留（Day2 决策），回滚可行。
+                    if (_validatorRegistry != null)
+                    {
+                        var postResult = _validatorRegistry.Run(ValidationStage.Post,
+                            new PostBuildData
+                            {
+                                Entities = buildResult.BuiltObjects,
+                                ExpectedCount = buildResult.InstantiatedCount
+                            });
+                        if (!postResult.IsValid)
+                        {
+                            if (CurrentState != GenerationTaskState.Generating) return;
+                            LogValidationErrors("后置校验失败，已触发全量回滚", postResult);
+                            _stateMachine.TryTransit(GenerationTaskState.Failed);
+                            TryAutoRollback();
+                            return;
+                        }
+                    }
                     _stateMachine.TryTransit(GenerationTaskState.Success);
                     var layoutInfo = buildResult.OverlapRatio > 0f
                         ? $"，重叠修正 {buildResult.ResolvedOverlapPairs} 对（残留重叠率 {buildResult.OverlapRatio:P1}）"

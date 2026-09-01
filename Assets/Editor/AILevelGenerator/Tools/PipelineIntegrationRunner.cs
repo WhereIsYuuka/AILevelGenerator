@@ -10,6 +10,7 @@ using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Mappings;
 using AILevelGenerator.Runtime.Scheduling;
 using AILevelGenerator.Runtime.Utilities;
+using AILevelGenerator.Runtime.Validation;
 using UnityEditor;
 using UnityEngine;
 // Debug 歧义：System.Diagnostics.Debug（Stopwatch 所需）与 UnityEngine.Debug 同名，统一指向引擎日志
@@ -306,9 +307,22 @@ namespace AILevelGenerator.Editor.Tools
             var binder = new ComponentBinder(bindingConfig);
 
             var rollback = new RollbackManager();
-            var builder = new SceneLevelBuilder(mapper, rollback, binder, new NavMeshBaker());
 
-            var scheduler = new GeneratorScheduler(new MockGenerator(delayMs, propCount));
+            // 第四周-Day3：隔离链路同样装配校验体系（Mid 生成中校验 + Post 后置校验），
+            // 使联调工具持续覆盖三层校验链。Post 可达性关闭：联调用确定性散布坐标
+            // （部分超出 ToolScene 地面范围），可达性属真实场景验收项（主链路 GeneratorServiceInitializer 开启）。
+            var registry = new ValidatorRegistry();
+            if (mapper != null)
+            {
+                registry.SetServices(mapper, null);
+                registry.Register(ValidationStage.Mid, new ResourceValidator());
+                registry.Register(ValidationStage.Mid, new DataBoundsValidator());
+                registry.Register(ValidationStage.Post, new PostBuildValidator(bindingConfig, checkReachability: false));
+            }
+
+            var builder = new SceneLevelBuilder(mapper, rollback, binder, new NavMeshBaker(), registry);
+
+            var scheduler = new GeneratorScheduler(new MockGenerator(delayMs, propCount), registry);
             scheduler.SetBuilder(builder);
             return (scheduler, rollback);
         }

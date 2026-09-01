@@ -72,15 +72,11 @@ namespace AILevelGenerator.Editor.Core
             // 环境自动适配（Day5）：收尾同步烘焙全局 NavMesh（全场景收集 → BuildNavMeshData → 注册数据）
             var navMeshBaker = new NavMeshBaker();
 
-            // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）。
-            // 注入回滚管理器：取消/失败时经其分帧删除本次生成根，不阻塞编辑器；
-            // 注入组件绑定器：实例化后自动挂载逻辑组件（按逻辑名查绑定配置）；
-            // 注入 NavMesh 烘焙器：构建收尾同步烘焙全局 NavMesh（「烘焙中」提示 + 完成日志 + 场景状态同步）。
-            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager, componentBinder, navMeshBaker));
-
-            // 校验体系（第四周-Day2）：前置校验注册（输入合法性/资源存在性/数值边界/模板范围），
-            // 调度器接管执行（核心只做调度，校验规则全部在具体校验器内，开闭原则）。
-            // 模板专属校验器：遍历模板资产逐个注册（每个模板可注册自己的校验器），跳过空 TemplateId 模板。
+            // 校验体系（第四周-Day2/3）：注册表先行——构建器（Mid）与调度器（Pre/Post）共享同一实例，
+            // 阶段过滤互不干扰（核心只做调度，校验规则全部在具体校验器内，开闭原则）。
+            // Pre 前置校验：输入合法性/资源存在性/数值边界/模板范围（模板专属：遍历模板资产逐个注册，跳过空 TemplateId）；
+            // Mid 生成中校验：与 Pre 同校验器（DataBounds/Resource），每帧批次兜底数据在 Pre 后被污染/默认值应用的差异面；
+            // Post 后置校验：实体空引用/组件完整性/逻辑可达性（可达性开启 = 真实场景验收项），失败自动全量回滚。
             var validatorRegistry = new ValidatorRegistry();
             validatorRegistry.SetServices(ServiceLocator.Get<IResourceMapper>(), ServiceLocator.Get<ITemplateProvider>());
             validatorRegistry.Register(ValidationStage.Pre, new RequestValidator());
@@ -89,9 +85,19 @@ namespace AILevelGenerator.Editor.Core
             foreach (var t in ServiceLocator.Get<ITemplateProvider>()?.GetLevelTemplates() ?? Array.Empty<LevelTemplate>())
                 if (t is ConfigurableLevelTemplate config && !string.IsNullOrEmpty(config.TemplateId))
                     validatorRegistry.RegisterForTemplate(config.TemplateId, new TemplateScopeValidator(config));
+            validatorRegistry.Register(ValidationStage.Mid, new DataBoundsValidator());
+            validatorRegistry.Register(ValidationStage.Mid, new ResourceValidator());
+            validatorRegistry.Register(ValidationStage.Post, new PostBuildValidator(bindingConfig));
+
+            // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）。
+            // 注入回滚管理器：取消/失败时经其分帧删除本次生成根，不阻塞编辑器；
+            // 注入组件绑定器：实例化后自动挂载逻辑组件（按逻辑名查绑定配置）；
+            // 注入 NavMesh 烘焙器：构建收尾同步烘焙全局 NavMesh（「烘焙中」提示 + 完成日志 + 场景状态同步）；
+            // 注入校验注册表：每帧批次后跑 Mid 生成中校验（失败立即终止构建 + 两级回滚兜底）。
+            ServiceLocator.Register<ILevelBuilder>(new SceneLevelBuilder(ServiceLocator.Get<IResourceMapper>(), rollbackManager, componentBinder, navMeshBaker, validatorRegistry));
 
             // 调度器：注入构建器后，生成成功会自动进入分帧构建阶段（构建完成才算整条任务成功）；
-            // 注入校验注册表（前置校验拦截）+ 场景快照（校验失败清理 / 构建失败自动全量回滚）
+            // 注入校验注册表（前置校验拦截 + 后置校验回滚）+ 场景快照（校验失败清理 / 构建失败自动全量回滚）
             var scheduler = new GeneratorScheduler(generator, validatorRegistry);
             scheduler.SetBuilder(ServiceLocator.Get<ILevelBuilder>());
             scheduler.SetSnapshotManager(SceneSnapshotManager.Instance);

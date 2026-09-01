@@ -14,9 +14,9 @@ using TerrainData = AILevelGenerator.Runtime.Data.TerrainData;
 namespace AILevelGenerator.Tests.EditMode
 {
     /// <summary>
-    /// 调度器 × 后置校验（第四周-Day3）集成测试：
+    /// 调度器 × 后置校验（第四周-Day3，Day4 固化快照生命周期）集成测试：
     /// Post 校验失败（场景已污染）→ 转 Failed + 自动全量回滚 + 复位 Ready；
-    /// 无快照 → 保持 Failed 不回滚；Post 通过 → Success 且快照保留（成功路径不丢弃，快照由后续生命周期管理）；
+    /// 无快照 → 保持 Failed 不回滚；Post 通过 → Success 且清理快照（Day4：事务提交即删除）；
     /// 未注册 Post 校验器 → 行为不变（回归保护）；校验器异常 → 单点转 VALIDATOR_ERROR 不打断失败链路。
     /// </summary>
     public class GeneratorSchedulerPostValidationTests
@@ -211,7 +211,7 @@ namespace AILevelGenerator.Tests.EditMode
         }
 
         [Test]
-        public async Task 后置校验通过_转成功且快照保留()
+        public async Task 后置校验通过_转成功且清理快照()
         {
             var (scheduler, snapshots, builder, _) = CreateRig(
                 new FakeGenerator { Handler = _ => Task.FromResult(CreateSuccessResult()) },
@@ -221,8 +221,9 @@ namespace AILevelGenerator.Tests.EditMode
 
             Assert.AreEqual(GenerationTaskState.Success, scheduler.CurrentState, "Post 通过应正常转成功");
             Assert.IsTrue(builder.BuildCalled);
+            Assert.AreEqual(1, snapshots.CreateCount, "合法请求应已创建快照");
             Assert.AreEqual(0, snapshots.RollbackCount, "通过路径不得回滚");
-            Assert.AreEqual(0, snapshots.DiscardCount, "成功路径不得丢弃快照（快照由 Day4 成功清理语义管理）");
+            Assert.AreEqual(1, snapshots.DiscardCount, "Day4：成功即事务提交，快照完成使命应被清理");
         }
 
         [Test]

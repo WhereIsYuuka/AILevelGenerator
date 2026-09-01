@@ -10,6 +10,14 @@ namespace AILevelGenerator.Runtime.Scheduling
     /// <summary>
     /// 生成调度器：驱动 状态机 + 生成器 + 日志 的基础异步链路。
     /// 职责：校验请求 → 状态流转 → 异步调用生成器 → 结果判定 → 日志输出。
+    /// 第四周-Day4 固化流程（快照生命周期全权归调度器）：
+    ///   请求级前置校验（失败 → 拦截，零快照零状态变更）
+    ///   → 创建快照（失败仅警告，降级为增量回滚兜底）
+    ///   → Generating → LLM 生成（异常 → Failed + 丢弃快照）
+    ///   → 数据级前置校验（失败 → Failed + 丢弃快照）
+    ///   → 分帧构建（Mid 在构建器内，失败 → Failed + 全量回滚）
+    ///   → 后置校验（失败 → Failed + 全量回滚；通过 → Success + 丢弃快照）
+    ///   → 构建取消（增量删除由构建器执行，Failed + 丢弃快照）。
     /// 注意：所有异常路径均被捕获并转为 Failed 状态，返回的 Task 永不清零，
     /// 调用方（窗口）可安全 fire-and-forget；禁止在本类任何位置使用 .Result/.Wait()（Editor 同步上下文下必死锁）。
     /// </summary>
@@ -20,7 +28,7 @@ namespace AILevelGenerator.Runtime.Scheduling
         private ILogger _logger;
         private ILevelBuilder _builder; // Day1：生成成功后分帧构建场景（未注入时行为与纯生成链路一致）
         private ValidatorRegistry _validatorRegistry; // Day2：可插拔校验器注册表（未注入时保持旧链路行为）
-        private ISceneSnapshotManager _snapshotManager; // Day2：场景级快照（校验失败清理 / 构建失败自动全量回滚）
+        private ISceneSnapshotManager _snapshotManager; // Day4：场景级快照（前置校验后创建 / 成功清理 / 失败回滚消费 / 取消丢弃）
 
         /// <summary> 取消标记（Day3）：LLM 生成阶段取消后置位，结果返回时据此丢弃不进入构建 </summary>
         private volatile bool _cancelRequested;
@@ -55,8 +63,9 @@ namespace AILevelGenerator.Runtime.Scheduling
         }
 
         /// <summary>
-        /// 注入场景快照服务（Day2，可选）：前置校验失败自动清理快照；构建失败（场景已污染）自动全量回滚。
-        /// 未注入时校验失败仅拦截不打快照，构建失败保持旧行为（仅增量清理 + Failed）。
+        /// 注入场景快照服务（Day2 起，Day4 固化）：快照生命周期全权归调度器——
+        /// 前置校验通过后创建；成功路径清理；构建中/后失败（场景已污染）自动全量回滚；取消/校验失败丢弃。
+        /// 未注入时保持旧链路行为（无快照能力，失败走增量清理兜底）。
         /// </summary>
         public void SetSnapshotManager(ISceneSnapshotManager snapshotManager) => _snapshotManager = snapshotManager;
 
@@ -98,8 +107,9 @@ namespace AILevelGenerator.Runtime.Scheduling
                 _logger?.LogError("生成请求为空或缺少描述，已取消");
                 return; // 停留在 Ready：调用方 bug 不走状态流转，保持流转表最小
             }
-            // Day2 请求级前置校验（输入合法性）：非法输入 100% 拦截，不进入生成链路；
-            // 窗口已创建场景快照（零变更），校验失败自动丢弃，避免陈旧快照误导「回滚到快照」按钮。
+            // Day2 请求级前置校验（输入合法性）：非法输入 100% 拦截，不进入生成链路。
+            // Day4 固化：本分支发生在快照创建之前 → 零快照副作用（不创建也不丢弃——
+            // 若有上次自动回滚失败遗留的快照，保留供「回滚到快照」按钮人工逃生）。
             // 无注册表时保留旧内联检查（行为等价，现有测试路径）。
             if (_validatorRegistry != null)
             {
@@ -107,7 +117,6 @@ namespace AILevelGenerator.Runtime.Scheduling
                 if (!validation.IsValid)
                 {
                     LogValidationErrors("前置校验失败，已拦截本次生成", validation);
-                    _snapshotManager?.DiscardSnapshot();
                     return; // 不进入状态流转（停留当前状态，调用方可修改输入后重试）
                 }
             }
@@ -119,6 +128,10 @@ namespace AILevelGenerator.Runtime.Scheduling
             _cancelRequested = false; // 新一轮任务：重置取消标记（防止上轮取消污染本轮）
             if (CurrentState is GenerationTaskState.Success or GenerationTaskState.Failed)
                 _stateMachine.TryTransit(GenerationTaskState.Ready); // 新一轮生成前重置
+
+            // Day4 固化流程：前置校验通过 → 创建场景快照（失败仅警告，降级为增量回滚兜底，不阻塞生成）。
+            // 快照生命周期自此全权归调度器：成功清理 / 失败回滚消费 / 取消与校验失败丢弃。
+            TryCreateSnapshot();
 
             // —— 异步主体：全部异常路径均捕获，返回的 Task 永不清零 ——
             GenerationResult result = null;
@@ -134,6 +147,8 @@ namespace AILevelGenerator.Runtime.Scheduling
                 // 先查状态再流转：防止 Ready→Failed 非法流转被状态机拒绝后状态卡死
                 if (CurrentState == GenerationTaskState.Generating)
                     _stateMachine.TryTransit(GenerationTaskState.Failed);
+                // Day4：生成异常 = 场景零变更（未进入构建），无需全量回滚；丢弃快照避免陈旧快照误导回滚按钮
+                _snapshotManager?.DiscardSnapshot();
                 return;
             }
 
@@ -174,6 +189,8 @@ namespace AILevelGenerator.Runtime.Scheduling
                 {
                     // 未注入构建器：保持纯生成链路行为
                     _stateMachine.TryTransit(GenerationTaskState.Success);
+                    // Day4：成功即事务提交，快照完成使命 → 清理（无残留）
+                    _snapshotManager?.DiscardSnapshot();
                     _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}，耗时 {result.GenerationTime:F1}s");
                 }
                 else
@@ -222,6 +239,8 @@ namespace AILevelGenerator.Runtime.Scheduling
                         }
                     }
                     _stateMachine.TryTransit(GenerationTaskState.Success);
+                    // Day4 固化流程：成功（删除快照）——事务提交，快照完成使命即清理（无磁盘/状态残留）
+                    _snapshotManager?.DiscardSnapshot();
                     var layoutInfo = buildResult.OverlapRatio > 0f
                         ? $"，重叠修正 {buildResult.ResolvedOverlapPairs} 对（残留重叠率 {buildResult.OverlapRatio:P1}）"
                         : "";
@@ -247,6 +266,24 @@ namespace AILevelGenerator.Runtime.Scheduling
                 _stateMachine.TryTransit(GenerationTaskState.Failed);
                 _logger?.LogError($"生成失败：场景构建异常 - {ex.Message}");
                 TryAutoRollback(); // Day2：构建异常同样视为场景已污染 → 自动全量回滚兜底
+            }
+        }
+
+        /// <summary>
+        /// 创建本次任务的场景快照（第四周-Day4 固化流程：前置校验之后、状态流转之前）。
+        /// 失败仅警告降级（增量回滚兜底仍在），不阻塞生成；实现体抛异常也被吞掉（快照是增强能力，不得打断链路）。
+        /// </summary>
+        private void TryCreateSnapshot()
+        {
+            if (_snapshotManager == null) return;
+            try
+            {
+                if (!_snapshotManager.CreateSnapshot())
+                    _logger?.LogWarning("场景快照创建失败（如场景未保存），本次生成将无「回滚到快照」能力，取消/失败仍会增量清理本次物体");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning($"场景快照创建异常：{ex.Message}（已降级为增量回滚兜底）");
             }
         }
 

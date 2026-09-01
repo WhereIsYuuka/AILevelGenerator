@@ -288,13 +288,8 @@ namespace AILevelGenerator.Editor.UI
                 return;
             }
 
-            // 第四周-Day1：生成前创建场景级快照（供「回滚到快照」全量还原）。
-            // 失败仅警告不阻塞生成——取消/失败路径仍有增量回滚（IRollbackManager 分帧删除）兜底。
-            var snapshotService = ServiceLocator.Get<ISceneSnapshotManager>();
-            if (snapshotService != null && !snapshotService.CreateSnapshot())
-                LogWarning("场景快照创建失败（如场景未保存），本次生成将无「回滚到快照」能力，取消/失败仍会增量清理本次物体");
-            RefreshRollbackButton();
-
+            // 第四周-Day4：快照创建已移交调度器（前置校验通过后创建，失败仅警告降级为增量回滚）——
+            // 窗口不再拥有快照生命周期，回滚按钮状态由调度器状态变更事件链驱动刷新（Ready→Generating 时快照已就绪）。
             // fire-and-forget：调度器内部捕获全部异常并转为 Failed 状态，返回的 Task 永不清零，可安全丢弃
             _ = _scheduler.StartGenerationAsync(new GenerationRequest
             {

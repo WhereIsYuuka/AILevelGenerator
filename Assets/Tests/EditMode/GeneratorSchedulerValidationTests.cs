@@ -14,11 +14,13 @@ using TerrainData = AILevelGenerator.Runtime.Data.TerrainData;
 namespace AILevelGenerator.Tests.EditMode
 {
     /// <summary>
-    /// 调度器 × 前置校验 × 场景快照集成测试（第四周-Day2）：
-    /// 请求校验失败 → 拦截停留原状态 + 丢弃快照（零变更不 OpenScene）；
+    /// 调度器 × 前置校验 × 场景快照集成测试（第四周-Day2，Day4 固化快照生命周期）：
+    /// 请求校验失败 → 拦截停留原状态 + 零快照副作用（前置校验在快照创建之前）；
     /// 数据校验失败 → 转 Failed + 丢弃快照 + 构建器未调用；
-    /// 构建失败/异常（场景已污染）→ 自动全量回滚 + 复位 Ready；取消 → 仅丢弃快照不回滚。
-    /// 快照生命周期一致性：构建前失败/取消路径统一 DiscardSnapshot，避免陈旧快照误导回滚按钮。
+    /// 构建失败/异常（场景已污染）→ 自动全量回滚 + 复位 Ready；取消 → 仅丢弃快照不回滚；
+    /// 成功 → 事务提交删除快照；生成异常 → Failed + 丢弃快照（场景零变更零残留）。
+    /// 快照生命周期一致性：所有任务终结路径统一清理快照（成功丢弃 / 失败回滚消费 / 取消与校验失败丢弃），
+    /// 避免陈旧快照误导回滚按钮。
     /// </summary>
     public class GeneratorSchedulerValidationTests
     {
@@ -50,6 +52,7 @@ namespace AILevelGenerator.Tests.EditMode
         {
             public bool HasSnapshotResult = true;
             public bool RollbackResult = true;
+            public bool CreateResult = true; // Day4：可控快照创建结果（验证失败降级）
             public int CreateCount;
             public int DiscardCount;
             public int RollbackCount;
@@ -58,7 +61,7 @@ namespace AILevelGenerator.Tests.EditMode
             public string SnapshotPath => "Temp/TestSnapshot.unity";
             public string OriginalScenePath => "";
 
-            public bool CreateSnapshot() { CreateCount++; return true; }
+            public bool CreateSnapshot() { CreateCount++; return CreateResult; }
             public bool RollbackToSnapshot(bool rebakeNavMesh = true) { RollbackCount++; return RollbackResult; }
             public bool DiscardSnapshot() { DiscardCount++; return true; }
         }
@@ -113,7 +116,7 @@ namespace AILevelGenerator.Tests.EditMode
         }
 
         [Test]
-        public async Task 请求校验失败_拦截停留原状态且丢弃快照()
+        public async Task 请求校验失败_拦截停留原状态且零快照副作用()
         {
             var (scheduler, snapshots, _, logger, _) = CreateRig(
                 new FakeGenerator { Handler = _ => Task.FromResult(CreateSuccessResult()) });
@@ -123,7 +126,8 @@ namespace AILevelGenerator.Tests.EditMode
             await scheduler.StartGenerationAsync(request);
 
             Assert.AreEqual(GenerationTaskState.Ready, scheduler.CurrentState, "非法输入必须 100% 拦截，停留原状态");
-            Assert.AreEqual(1, snapshots.DiscardCount, "校验失败应丢弃（零变更）快照");
+            Assert.AreEqual(0, snapshots.CreateCount, "Day4 固化顺序：前置校验在快照创建之前，校验失败零快照创建");
+            Assert.AreEqual(0, snapshots.DiscardCount, "校验失败无需丢弃快照（未创建）");
             Assert.AreEqual(0, snapshots.RollbackCount, "构建前失败不得触发全量回滚");
             Assert.IsTrue(logger.Messages.Exists(m => m.Contains("[ERROR]") && m.Contains("前置校验失败")),
                 "应输出统一格式的拦截日志");
@@ -142,6 +146,7 @@ namespace AILevelGenerator.Tests.EditMode
 
             Assert.AreEqual(GenerationTaskState.Failed, scheduler.CurrentState, "不存在资源必须被拦截为失败");
             Assert.IsFalse(builder.BuildCalled, "数据校验失败不得进入构建阶段");
+            Assert.AreEqual(1, snapshots.CreateCount, "合法请求应已创建快照（数据级校验失败时快照已存在）");
             Assert.AreEqual(1, snapshots.DiscardCount, "构建前失败应丢弃快照");
             Assert.AreEqual(0, snapshots.RollbackCount);
             Assert.IsTrue(logger.Messages.Exists(m => m.Contains("[ERROR]") && m.Contains("数据校验失败")),
@@ -161,7 +166,8 @@ namespace AILevelGenerator.Tests.EditMode
 
             Assert.AreEqual(GenerationTaskState.Success, scheduler.CurrentState, "合法数据应正常走通全链路");
             Assert.IsTrue(builder.BuildCalled);
-            Assert.AreEqual(0, snapshots.DiscardCount, "成功路径不应误丢弃快照（快照由后续生命周期管理）");
+            Assert.AreEqual(1, snapshots.CreateCount, "合法请求应已创建快照");
+            Assert.AreEqual(1, snapshots.DiscardCount, "Day4：成功即事务提交，快照完成使命应被清理");
         }
 
         [Test]
@@ -241,6 +247,56 @@ namespace AILevelGenerator.Tests.EditMode
             Assert.AreEqual(1, snapshots.DiscardCount, "取消即快照作废（快照只存在于生成-构建生命周期）");
             Assert.IsTrue(logger.Messages.Exists(m => m.Contains("[WARN]") && m.Contains("生成取消")),
                 "取消应输出提示（非错误）");
+        }
+
+        [Test]
+        public async Task 生成器抛异常_转失败并丢弃快照()
+        {
+            var (scheduler, snapshots, builder, logger, _) = CreateRig(
+                new FakeGenerator { Handler = _ => Task.FromException<GenerationResult>(new Exception("llm boom")) });
+
+            await scheduler.StartGenerationAsync(CreateRequest());
+
+            Assert.AreEqual(GenerationTaskState.Failed, scheduler.CurrentState);
+            Assert.IsFalse(builder.BuildCalled, "生成异常不得进入构建");
+            Assert.AreEqual(1, snapshots.CreateCount, "生成异常前快照已创建（前置校验通过）");
+            Assert.AreEqual(1, snapshots.DiscardCount, "生成异常 = 场景零变更，应丢弃快照避免陈旧快照误导回滚按钮");
+            Assert.AreEqual(0, snapshots.RollbackCount, "场景零变更无需全量回滚");
+            Assert.IsTrue(logger.Messages.Exists(m => m.Contains("[ERROR]") && m.Contains("生成异常") && m.Contains("llm boom")),
+                "应输出生成异常日志");
+        }
+
+        [Test]
+        public async Task 快照创建失败_降级继续生成并提示()
+        {
+            var (scheduler, snapshots, builder, logger, _) = CreateRig(
+                new FakeGenerator { Handler = _ => Task.FromResult(CreateSuccessResult()) });
+            builder.Handler = (_, _) => Task.FromResult(LevelBuildResult.Succeeded(1, 0, 1f));
+            snapshots.CreateResult = false; // 快照创建失败：降级为增量回滚兜底，不阻塞生成
+
+            await scheduler.StartGenerationAsync(CreateRequest());
+
+            Assert.AreEqual(GenerationTaskState.Success, scheduler.CurrentState, "快照创建失败不得阻塞生成链路");
+            Assert.AreEqual(1, snapshots.CreateCount, "应尝试创建快照");
+            Assert.AreEqual(0, snapshots.RollbackCount);
+            Assert.IsTrue(logger.Messages.Exists(m => m.Contains("[WARN]") && m.Contains("快照创建失败")),
+                "应输出降级提示");
+        }
+
+        [Test]
+        public async Task 第二轮生成_快照重新创建()
+        {
+            var (scheduler, snapshots, builder, _, _) = CreateRig(
+                new FakeGenerator { Handler = _ => Task.FromResult(CreateSuccessResult()) });
+            builder.Handler = (_, _) => Task.FromResult(LevelBuildResult.Succeeded(1, 0, 1f));
+
+            await scheduler.StartGenerationAsync(CreateRequest()); // 第一轮：创建 + 成功清理
+            Assert.AreEqual(1, snapshots.CreateCount, "第一轮应创建快照");
+
+            await scheduler.StartGenerationAsync(CreateRequest()); // 第二轮：重新创建（覆盖语义）
+
+            Assert.AreEqual(2, snapshots.CreateCount, "新一轮任务应重新创建快照");
+            Assert.AreEqual(GenerationTaskState.Success, scheduler.CurrentState);
         }
 
         [Test]

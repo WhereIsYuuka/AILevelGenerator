@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.LLM;
@@ -8,9 +11,10 @@ using AILevelGenerator.Runtime.Utilities;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
-// 别名 using：避免与 UnityEngine.ILogger 歧义（类声明与显式实现保持全限定名）
+// 别名 using：避免与 UnityEngine.ILogger / UnityEditor.LogEntry 歧义（类声明与显式实现保持全限定名）
 using IGeneratorScheduler = AILevelGenerator.Runtime.Interfaces.IGeneratorScheduler;
 using GenerationTaskState = AILevelGenerator.Runtime.Scheduling.GenerationTaskState;
+using LogEntry = AILevelGenerator.Runtime.Diagnostics.LogEntry;
 
 namespace AILevelGenerator.Editor.UI
 {
@@ -43,6 +47,17 @@ namespace AILevelGenerator.Editor.UI
         private Toggle _autoRunToggle; // Day6 联调：生成成功后自动进入播放模式（勾选后开启）
         private Button _rollbackBtn;   // 第四周-Day1：回滚到生成前快照（场景级）
 
+        // 第四周-Day5：日志级别筛选（信息/警告/错误/成功，全开 = 不过滤）
+        private Toggle _filterInfo;
+        private Toggle _filterWarning;
+        private Toggle _filterError;
+        private Toggle _filterSuccess;
+
+        // 第四周-Day5：生成报告块（任务终态渲染，含错误码/定位/建议，Markdown 归档由初始器订阅落盘）
+        private VisualElement _reportSection;
+        private Label _reportContent;
+        private GenerationReport _lastReport;
+
         /// <summary> 模板下拉选项缓存：choices（DisplayName）与模板对象一一对应，index 即模板下标 </summary>
         private readonly List<LevelTemplate> _templateOptions = new();
 
@@ -52,7 +67,7 @@ namespace AILevelGenerator.Editor.UI
         private GenerationTaskState _previousState = GenerationTaskState.Ready; // Day6：自动运行判别用（生成中→成功才触发）
         // 注：状态/进度订阅不设防重标志——CreateGUI 会多次调用，但 C# 事件对同一方法组委托
         // 自动去重；且若 ServiceLocator 实例被覆盖注册，旧订阅会失效，每次 CreateGUI 须对当前实例重订阅。
-        private readonly List<string> _logEntries = new List<string>(); // 内存缓存，避免字符串频繁拼接
+        private readonly List<LogEntry> _logEntries = new List<LogEntry>(); // 结构化日志缓存（级别/错误码/定位/建议/阶段）
         private const int MaxLogEntries = 500; // 防止内存泄漏
 
         [MenuItem("Tools/AI Level Generator")]
@@ -112,6 +127,12 @@ namespace AILevelGenerator.Editor.UI
             _apiStatusLabel = rootVisualElement.Q<Label>("api-status-label");
             _autoRunToggle = rootVisualElement.Q<Toggle>("auto-run-toggle");
             _rollbackBtn = rootVisualElement.Q<Button>("rollback-button");
+            _filterInfo = rootVisualElement.Q<Toggle>("filter-info");
+            _filterWarning = rootVisualElement.Q<Toggle>("filter-warning");
+            _filterError = rootVisualElement.Q<Toggle>("filter-error");
+            _filterSuccess = rootVisualElement.Q<Toggle>("filter-success");
+            _reportSection = rootVisualElement.Q<VisualElement>("report-section");
+            _reportContent = rootVisualElement.Q<Label>("report-content");
 
             // 开启富文本支持，用于显示彩色日志
             _logContent.enableRichText = true;
@@ -162,6 +183,12 @@ namespace AILevelGenerator.Editor.UI
             if (_saveKeyBtn != null) _saveKeyBtn.clicked += OnSaveApiKeyClicked;
             if (_testConnectionBtn != null) _testConnectionBtn.clicked += OnTestConnectionClicked;
             if (_rollbackBtn != null) _rollbackBtn.clicked += OnRollbackClicked;
+
+            // 第四周-Day5：日志级别筛选（任一开关变化即重渲染，Toggle 未找到时静默跳过）
+            _filterInfo?.RegisterValueChangedCallback(_ => RenderLogs());
+            _filterWarning?.RegisterValueChangedCallback(_ => RenderLogs());
+            _filterError?.RegisterValueChangedCallback(_ => RenderLogs());
+            _filterSuccess?.RegisterValueChangedCallback(_ => RenderLogs());
         }
 
         /// <summary> 取消生成：转发调度器（构建阶段分帧清理本次物体，生成阶段丢弃结果） </summary>
@@ -387,6 +414,10 @@ namespace AILevelGenerator.Editor.UI
             if (_levelBuilder != null)
                 _levelBuilder.ProgressChanged += OnBuildProgress;
 
+            // 第四周-Day5：订阅生成报告（终态触发一次），渲染报告块；
+            // Markdown 归档由 GeneratorServiceInitializer 单独订阅（无窗口也落盘），窗口只管展示。
+            _scheduler.GenerationCompleted += OnGenerationCompleted;
+
             OnSchedulerStateChanged(_scheduler.CurrentState); // 初始渲染
         }
 
@@ -458,39 +489,23 @@ namespace AILevelGenerator.Editor.UI
             RenderLogs();
         }
 
-        #region 日志系统（线程安全 + 富文本）
+        #region 日志系统（结构化 LogEntry + 级别筛选 + 富文本）
 
-        public void Log(string message)
+        public void Log(string message) => AppendLog(LogEntry.Create(LogLevel.Info, message));
+
+        public void LogError(string message) => AppendLog(LogEntry.Create(LogLevel.Error, message));
+
+        public void LogSuccess(string message) => AppendLog(LogEntry.Create(LogLevel.Success, message));
+
+        public void LogWarning(string message) => AppendLog(LogEntry.Create(LogLevel.Warning, message));
+
+        /// <summary>
+        /// 统一日志入口（第四周-Day5 结构化）：持有级别/错误码/字段定位/解决建议/管线阶段，
+        /// 渲染时按级别筛选 + 富文本着色 + 建议附加；未设置的字段安全省略。
+        /// </summary>
+        private void AppendLog(LogEntry entry)
         {
-            AppendLog("INFO", message, null);
-        }
-
-        public void LogError(string message)
-        {
-            AppendLog("ERROR", message, "red");
-        }
-
-        public void LogSuccess(string message)
-        {
-            AppendLog("SUCCESS", message, "green");
-        }
-
-        public void LogWarning(string message)
-        {
-            AppendLog("WARNING", message, "orange");
-        }
-
-        private void AppendLog(string level, string message, string colorHex)
-        {
-            var timestamp = DateTime.Now.ToString("HH:mm:ss");
-            string formatted;
-            
-            if (!string.IsNullOrEmpty(colorHex))
-                formatted = $"[{timestamp}] <color={colorHex}>[{level}]</color> {message}";
-            else
-                formatted = $"[{timestamp}] [{level}] {message}";
-
-            _logEntries.Add(formatted);
+            _logEntries.Add(entry);
 
             // 防止内存溢出
             if (_logEntries.Count > MaxLogEntries)
@@ -501,11 +516,34 @@ namespace AILevelGenerator.Editor.UI
             RenderLogs();
         }
 
+        /// <summary> 按级别筛选重渲染（任一筛选 Toggle 变化时触发） </summary>
         private void RenderLogs()
         {
             if (_logContent == null) return;
-            _logContent.text = string.Join("\n", _logEntries);
-            
+
+            // Toggle 未绑定时视为全开（CreateGUI 前防御）
+            var showInfo = _filterInfo?.value ?? true;
+            var showWarning = _filterWarning?.value ?? true;
+            var showError = _filterError?.value ?? true;
+            var showSuccess = _filterSuccess?.value ?? true;
+
+            var sb = new StringBuilder();
+            foreach (var entry in _logEntries)
+            {
+                var visible = entry.Level switch
+                {
+                    LogLevel.Info => showInfo,
+                    LogLevel.Warning => showWarning,
+                    LogLevel.Error => showError,
+                    LogLevel.Success => showSuccess,
+                    _ => true
+                };
+                if (!visible) continue;
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append(FormatEntry(entry));
+            }
+            _logContent.text = sb.ToString();
+
             // 自动滚到底部（带安全校验）
             if (_logScroll != null && _logContent != null)
             {
@@ -513,11 +551,67 @@ namespace AILevelGenerator.Editor.UI
             }
         }
 
+        /// <summary>
+        /// 单条结构化渲染：`[时间] [级别] [阶段] CODE：消息（定位）`，含解决建议时换行附加灰色提示行。
+        /// 消息已含格式化前缀（ErrorFormatter.Format 产物）时不再重复拼码（防双码）。
+        /// </summary>
+        private static string FormatEntry(LogEntry e)
+        {
+            var ts = e.Timestamp.ToString("HH:mm:ss");
+            var (tag, color) = e.Level switch
+            {
+                LogLevel.Warning => ("WARN", "orange"),
+                LogLevel.Error => ("ERROR", "red"),
+                LogLevel.Success => ("SUCCESS", "green"),
+                _ => ("INFO", null)
+            };
+            var stage = e.Stage == LogStage.None ? "" : $"[{StageToName(e.Stage)}] ";
+
+            var message = string.IsNullOrEmpty(e.Message) ? "无消息" : e.Message;
+            string body;
+            if (string.IsNullOrEmpty(e.Code))
+            {
+                body = message; // 纯文本日志（消息通常已含格式化前缀）
+            }
+            else
+            {
+                // 结构化日志：错误码/定位补全；消息已带码前缀则原样展示
+                var codePrefix = message.StartsWith(e.Code) ? "" : $"{e.Code}：";
+                var path = string.IsNullOrEmpty(e.DataPath) ? "" : $"（{e.DataPath}）";
+                body = $"{codePrefix}{message}{path}";
+            }
+
+            var head = color == null
+                ? $"[{ts}] [{tag}] {stage}{body}"
+                : $"[{ts}] <color={color}>[{tag}]</color> {stage}{body}";
+            return string.IsNullOrEmpty(e.Hint)
+                ? head
+                : $"{head}\n<color=#909090>　　建议：{e.Hint}</color>";
+        }
+
+        private static string StageToName(LogStage stage) => stage switch
+        {
+            LogStage.Request => "请求",
+            LogStage.Validation => "校验",
+            LogStage.Generation => "生成",
+            LogStage.Build => "构建",
+            LogStage.Rollback => "回滚",
+            LogStage.Cancellation => "取消",
+            LogStage.Report => "报告",
+            _ => "其他"
+        };
+
         #endregion
 
         #region ILogger 实现（窗口即日志宿主，供校验器/生成器通过 SetLogger 注入）
 
         void AILevelGenerator.Runtime.Interfaces.ILogger.Log(string message) => Log(message);
+
+        /// <summary>
+        /// 结构化日志入口（第四周-Day5）：调度器/校验器经 ILogger 注入的结构化条目直通渲染管线，
+        /// 保留错误码/定位/建议/阶段（不降级为纯文本）。显式实现屏蔽 ILogger 默认方法，结构零丢失。
+        /// </summary>
+        void AILevelGenerator.Runtime.Interfaces.ILogger.Log(LogEntry entry) => AppendLog(entry);
 
         void AILevelGenerator.Runtime.Interfaces.ILogger.LogWarning(string message) => LogWarning(message);
 
@@ -537,11 +631,65 @@ namespace AILevelGenerator.Editor.UI
 
         #endregion
 
+        #region 生成报告块（第四周-Day5：终态事件 → 富文本摘要渲染）
+
+        /// <summary> 调度器 GenerationCompleted 回调：缓存最近报告并渲染报告块（级别色：成功绿/失败红/取消橙） </summary>
+        private void OnGenerationCompleted(GenerationReport report)
+        {
+            if (this == null) return; // 窗口销毁后回调保护
+            _lastReport = report;
+            RenderReportBlock();
+        }
+
+        private void RenderReportBlock()
+        {
+            if (_reportSection == null || _reportContent == null || _lastReport == null) return;
+            var r = _lastReport;
+
+            var color = r.FinalState == GenerationTaskState.Success ? "green"
+                : string.Equals(r.StatusText, "已取消", StringComparison.Ordinal) ? "orange"
+                : "red";
+
+            var lines = new List<string>
+            {
+                $"<color={color}><b>生成报告：{r.StatusText}</b></color>　耗时 {F(r.TotalTimeSeconds)}s（LLM {F(r.LlmTimeSeconds)}s + 构建 {F(r.BuildTimeSeconds)}s）　错误 {r.ErrorCount} / 警告 {r.WarningCount}",
+                $"模板：{r.TemplateName ?? r.TemplateId}（种子 {r.RandomSeed}）　关卡：{r.LevelName}　道具 {r.PropCount} / 任务 {r.TaskCount}（主线 {r.MainTaskCount}）　地形：{(r.HasTerrain ? "有" : "无")}",
+                $"构建：实例化 {r.InstantiatedCount}，绑定组件 {r.BoundComponents}（失败 {r.BindFailedComponents}），重叠修正 {r.ResolvedOverlapPairs} 对（{F(r.OverlapRatio * 100f)}%）",
+                $"回滚：{r.RollbackNote}"
+            };
+
+            // 问题清单：错误在前（报告构建器已排序），逐条展示 错误码/定位/解决建议
+            if (r.Issues != null)
+            {
+                foreach (var issue in r.Issues)
+                {
+                    var sevText = issue.Severity == ErrorSeverity.Error ? "错误" : "警告";
+                    var sevColor = issue.Severity == ErrorSeverity.Error ? "red" : "orange";
+                    var path = string.IsNullOrEmpty(issue.DataPath) ? "" : $"（{issue.DataPath}）";
+                    lines.Add($"<color={sevColor}>[{sevText}]</color> {issue.Code}：{issue.Message}{path}");
+                    if (!string.IsNullOrEmpty(issue.Hint))
+                        lines.Add($"<color=#909090>　　建议：{issue.Hint}</color>");
+                }
+            }
+            lines.Add("<color=#808080>Markdown 完整报告已自动归档：Assets/Temp/GenerateReports/（含原始 LLM 响应）</color>");
+
+            _reportSection.style.display = DisplayStyle.Flex;
+            _reportContent.text = string.Join("\n", lines);
+        }
+
+        /// <summary> 数字统一两位小数（区域无关） </summary>
+        private static string F(float v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+        #endregion
+
         private void OnDestroy()
         {
-            // 清理状态/进度订阅，防止内存泄露（对未订阅的委托 -= 是安全空操作）
+            // 清理状态/进度/报告订阅，防止内存泄露（对未订阅的委托 -= 是安全空操作）
             if (_scheduler != null)
+            {
                 _scheduler.StateChanged -= OnSchedulerStateChanged;
+                _scheduler.GenerationCompleted -= OnGenerationCompleted;
+            }
             if (_levelBuilder != null)
                 _levelBuilder.ProgressChanged -= OnBuildProgress;
         }

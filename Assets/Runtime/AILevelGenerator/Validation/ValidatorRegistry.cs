@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 
 namespace AILevelGenerator.Runtime.Validation
@@ -73,7 +74,7 @@ namespace AILevelGenerator.Runtime.Validation
                     // 单点异常不打断聚合链：转错误条目，定位到校验器目标类型
                     result.Errors.Add(new ValidationError
                     {
-                        Code = "VALIDATOR_ERROR",
+                        Code = ErrorCodes.VALIDATOR_ERROR,
                         Message = $"校验器异常：{ex.Message}",
                         DataPath = reg.Adapter.DataType.Name
                     });

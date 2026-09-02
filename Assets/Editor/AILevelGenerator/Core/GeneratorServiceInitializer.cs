@@ -3,6 +3,7 @@ using AILevelGenerator.Editor.Builders;
 using AILevelGenerator.Editor.Tools;
 using AILevelGenerator.Editor.UI;
 using AILevelGenerator.Runtime.Components;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.LLM;
@@ -102,6 +103,14 @@ namespace AILevelGenerator.Editor.Core
             scheduler.SetBuilder(ServiceLocator.Get<ILevelBuilder>());
             scheduler.SetSnapshotManager(SceneSnapshotManager.Instance);
             ServiceLocator.Register<IGeneratorScheduler>(scheduler);
+
+            // 第四周-Day5：生成报告自动归档（Markdown 落盘 Assets/Temp/GenerateReports/，已被 gitignore）。
+            // 初始器订阅 = 无窗口打开/headless 运行也归档；窗口另订阅同一事件渲染报告块（互不依赖）。
+            scheduler.GenerationCompleted += report =>
+            {
+                var path = GenerationReportWriter.Write(report);
+                UnityEngine.Debug.Log($"[AI Generator] 生成报告已归档：{path ?? "（落盘失败，详见警告日志）"}");
+            };
         }
     }
 }

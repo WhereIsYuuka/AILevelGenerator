@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Scheduling;
 
 namespace AILevelGenerator.Runtime.Interfaces
@@ -19,6 +20,13 @@ namespace AILevelGenerator.Runtime.Interfaces
 
         /// <summary> 状态变更事件（参数为新状态），UI 层订阅用于刷新展示 </summary>
         event Action<GenerationTaskState> StateChanged;
+
+        /// <summary>
+        /// 生成报告事件（第四周-Day5）：一次生成任务在终态（成功/失败/取消/异常）统一触发一次，
+        /// 参数为本次任务的结构化报告（请求摘要/耗时/内容统计/构建摘要/校验问题清单/回滚信息）。
+        /// 窗口订阅后渲染报告块并落盘归档；请求被前置校验拦截（未进入任务）时不触发。
+        /// </summary>
+        event Action<GenerationReport> GenerationCompleted;
 
         /// <summary> 注入日志宿主（窗口实现 ILogger）；未注入时调度器静默运行 </summary>
         void SetLogger(ILogger logger);

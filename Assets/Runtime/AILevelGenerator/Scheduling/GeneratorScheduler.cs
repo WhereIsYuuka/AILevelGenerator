@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Validation;
 
@@ -18,6 +21,8 @@ namespace AILevelGenerator.Runtime.Scheduling
     ///   → 分帧构建（Mid 在构建器内，失败 → Failed + 全量回滚）
     ///   → 后置校验（失败 → Failed + 全量回滚；通过 → Success + 丢弃快照）
     ///   → 构建取消（增量删除由构建器执行，Failed + 丢弃快照）。
+    /// 第四周-Day5 固化：任务终态（成功/失败/取消/异常）统一构建生成报告并触发 GenerationCompleted 事件，
+    /// 校验错误逐条以结构化日志（错误码/字段定位/解决建议）输出。
     /// 注意：所有异常路径均被捕获并转为 Failed 状态，返回的 Task 永不清零，
     /// 调用方（窗口）可安全 fire-and-forget；禁止在本类任何位置使用 .Result/.Wait()（Editor 同步上下文下必死锁）。
     /// </summary>
@@ -25,6 +30,8 @@ namespace AILevelGenerator.Runtime.Scheduling
     {
         private readonly IGenerator _generator;
         private readonly GenerationTaskStateMachine _stateMachine = new();
+        private readonly GenerationReportBuilder _reportBuilder = new(); // Day5：终态报告构建（纯逻辑可单测）
+        private readonly Stopwatch _taskStopwatch = new(); // Day5：任务总耗时（单任务串行，实例字段安全）
         private ILogger _logger;
         private ILevelBuilder _builder; // Day1：生成成功后分帧构建场景（未注入时行为与纯生成链路一致）
         private ValidatorRegistry _validatorRegistry; // Day2：可插拔校验器注册表（未注入时保持旧链路行为）
@@ -32,6 +39,10 @@ namespace AILevelGenerator.Runtime.Scheduling
 
         /// <summary> 取消标记（Day3）：LLM 生成阶段取消后置位，结果返回时据此丢弃不进入构建 </summary>
         private volatile bool _cancelRequested;
+
+        // Day5：本轮任务回滚信息（TryAutoRollback 写入，终态报告读取；单任务串行，字段安全）
+        private bool _lastRollbackTriggered;
+        private bool _lastRollbackSucceeded;
 
         public GeneratorScheduler(IGenerator generator, ValidatorRegistry validatorRegistry = null)
         {
@@ -43,6 +54,9 @@ namespace AILevelGenerator.Runtime.Scheduling
 
         /// <summary> 生成中即为忙碌，此时拒绝新的生成请求 </summary>
         public bool IsBusy => CurrentState == GenerationTaskState.Generating;
+
+        /// <summary> 生成报告事件（Day5）：任务终态统一触发一次，供窗口渲染与落盘归档 </summary>
+        public event Action<GenerationReport> GenerationCompleted;
 
         /// <summary>
         /// 强制复位到 Ready（第四周-Day1：场景级回滚后重置状态机，事件链驱动窗口 UI 复位）。
@@ -89,7 +103,7 @@ namespace AILevelGenerator.Runtime.Scheduling
             }
             _cancelRequested = true;
             _builder?.Cancel(); // 构建中：由构建器帧头检查；未构建时置标记无副作用
-            _logger?.LogWarning("已请求取消：正在终止当前生成/构建...");
+            _logger?.Log(LogEntry.Create(LogLevel.Warning, "已请求取消：正在终止当前生成/构建...", stage: LogStage.Cancellation));
         }
 
         public async Task StartGenerationAsync(GenerationRequest request)
@@ -126,6 +140,9 @@ namespace AILevelGenerator.Runtime.Scheduling
                 return; // 停留在 Ready：调用方 bug 不走状态流转，保持流转表最小
             }
             _cancelRequested = false; // 新一轮任务：重置取消标记（防止上轮取消污染本轮）
+            _taskStopwatch.Restart(); // Day5：任务总耗时计时起点
+            _lastRollbackTriggered = false; // Day5：重置本轮回滚信息
+            _lastRollbackSucceeded = false;
             if (CurrentState is GenerationTaskState.Success or GenerationTaskState.Failed)
                 _stateMachine.TryTransit(GenerationTaskState.Ready); // 新一轮生成前重置
 
@@ -149,6 +166,12 @@ namespace AILevelGenerator.Runtime.Scheduling
                     _stateMachine.TryTransit(GenerationTaskState.Failed);
                 // Day4：生成异常 = 场景零变更（未进入构建），无需全量回滚；丢弃快照避免陈旧快照误导回滚按钮
                 _snapshotManager?.DiscardSnapshot();
+                // Day5：异常路径也产出报告（错误归入 LLM_ERROR，报告含失败原因）
+                EmitReport(request, new GenerationResult
+                {
+                    Success = false,
+                    Errors = new List<ValidationError> { new() { Code = ErrorCodes.LLM_ERROR, Message = ex.Message } }
+                }, null, GenerationTaskState.Failed);
                 return;
             }
 
@@ -158,7 +181,8 @@ namespace AILevelGenerator.Runtime.Scheduling
                 if (CurrentState == GenerationTaskState.Generating)
                     _stateMachine.TryTransit(GenerationTaskState.Failed);
                 _snapshotManager?.DiscardSnapshot(); // Day2：快照只存在于生成-构建生命周期，取消即失效
-                _logger?.LogWarning("生成已取消：LLM 结果已丢弃，场景未发生任何变更");
+                _logger?.Log(LogEntry.Create(LogLevel.Warning, "生成已取消：LLM 结果已丢弃，场景未发生任何变更", stage: LogStage.Cancellation));
+                EmitReport(request, result, null, GenerationTaskState.Failed, statusTextOverride: "已取消");
                 return;
             }
 
@@ -168,7 +192,7 @@ namespace AILevelGenerator.Runtime.Scheduling
             {
                 if (result.LevelData == null)
                 {
-                    result.Errors.Add(new ValidationError { Code = "DATA_NULL", Message = "生成结果缺少关卡数据（LevelData 为空）" });
+                    result.Errors.Add(new ValidationError { Code = ErrorCodes.DATA_NULL, Message = "生成结果缺少关卡数据（LevelData 为空）" });
                 }
                 else
                 {
@@ -192,27 +216,30 @@ namespace AILevelGenerator.Runtime.Scheduling
                     // Day4：成功即事务提交，快照完成使命 → 清理（无残留）
                     _snapshotManager?.DiscardSnapshot();
                     _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}，耗时 {result.GenerationTime:F1}s");
+                    EmitReport(request, result, null, GenerationTaskState.Success);
                 }
                 else
                 {
-                    await BuildSceneAndTransit(result); // 构建纳入 Generating 状态，完成才 Success
+                    await BuildSceneAndTransit(request, result); // 构建纳入 Generating 状态，完成才 Success
                 }
             }
             else
             {
                 _stateMachine.TryTransit(GenerationTaskState.Failed);
                 var summary = result?.Errors != null && result.Errors.Count > 0
-                    ? string.Join("；", result.Errors.Select(e => e.Message))
+                    ? string.Join("；", result.Errors.Select(e => ErrorFormatter.Format(e.Code, e.Message, e.DataPath)))
                     : "生成器未返回成功结果";
                 _logger?.LogError($"生成失败：{summary}");
+                EmitReport(request, result, null, GenerationTaskState.Failed);
             }
         }
 
         /// <summary>
         /// 分帧构建场景（Day1，纳入 Generating 状态）：构建成功 → Success；
         /// 构建失败/取消/异常 → Failed（已实例化物体的增量清理由构建器负责，Day3 起经 IRollbackManager 统一执行）。
+        /// Day5：所有终态分支统一 EmitReport 产出生成报告。
         /// </summary>
-        private async Task BuildSceneAndTransit(GenerationResult result)
+        private async Task BuildSceneAndTransit(GenerationRequest request, GenerationResult result)
         {
             try
             {
@@ -235,6 +262,7 @@ namespace AILevelGenerator.Runtime.Scheduling
                             LogValidationErrors("后置校验失败，已触发全量回滚", postResult);
                             _stateMachine.TryTransit(GenerationTaskState.Failed);
                             TryAutoRollback();
+                            EmitReport(request, result, buildResult, GenerationTaskState.Failed);
                             return;
                         }
                     }
@@ -245,6 +273,7 @@ namespace AILevelGenerator.Runtime.Scheduling
                         ? $"，重叠修正 {buildResult.ResolvedOverlapPairs} 对（残留重叠率 {buildResult.OverlapRatio:P1}）"
                         : "";
                     _logger?.LogSuccess($"生成成功：{result.LevelData?.LevelName ?? "无名称"}（构建 {buildResult.InstantiatedCount} 个实体，生成 {result.GenerationTime:F1}s + 构建 {buildResult.BuildTime:F1}s{layoutInfo}）");
+                    EmitReport(request, result, buildResult, GenerationTaskState.Success);
                     return;
                 }
 
@@ -253,12 +282,14 @@ namespace AILevelGenerator.Runtime.Scheduling
                 _stateMachine.TryTransit(GenerationTaskState.Failed);
                 if (buildResult?.Status == LevelBuildStatus.Cancelled)
                 {
-                    _logger?.LogWarning("生成取消：构建被中止，本次新增物体已清理");
+                    _logger?.Log(LogEntry.Create(LogLevel.Warning, "生成取消：构建被中止，本次新增物体已清理", stage: LogStage.Cancellation));
                     _snapshotManager?.DiscardSnapshot(); // Day2：用户主动取消 ≠ 失败，仅清理快照不触发全量回滚
+                    EmitReport(request, result, buildResult, GenerationTaskState.Failed, statusTextOverride: "已取消");
                     return;
                 }
                 _logger?.LogError($"生成失败：场景构建失败 - {buildResult?.ErrorMessage ?? "未知错误"}");
                 TryAutoRollback(); // Day2：构建已污染场景 → 自动全量回滚兜底
+                EmitReport(request, result, buildResult, GenerationTaskState.Failed);
             }
             catch (Exception ex)
             {
@@ -266,6 +297,7 @@ namespace AILevelGenerator.Runtime.Scheduling
                 _stateMachine.TryTransit(GenerationTaskState.Failed);
                 _logger?.LogError($"生成失败：场景构建异常 - {ex.Message}");
                 TryAutoRollback(); // Day2：构建异常同样视为场景已污染 → 自动全量回滚兜底
+                EmitReport(request, result, null, GenerationTaskState.Failed);
             }
         }
 
@@ -292,31 +324,65 @@ namespace AILevelGenerator.Runtime.Scheduling
         /// 构建中/后失败（场景已被本次生成污染）→ 有快照则 RollbackToSnapshot 全量原子还原，
         /// 成功则 ResetToReady（状态机复位，事件链驱动窗口 UI），失败则保持 Failed 并提示人工处理。
         /// 构建前失败/取消路径不调用本方法（场景零变更，仅 DiscardSnapshot）。
+        /// Day5：回滚结果写入 _lastRollbackTriggered/_lastRollbackSucceeded，供终态报告统计。
         /// </summary>
         private void TryAutoRollback()
         {
             if (_snapshotManager == null || !_snapshotManager.HasSnapshot) return; // 无快照：保持 Failed，增量清理已兜底
+            _lastRollbackTriggered = true;
             if (_snapshotManager.RollbackToSnapshot())
             {
+                _lastRollbackSucceeded = true;
                 ResetToReady();
-                _logger?.LogWarning("已自动回滚：构建失败后场景已恢复至生成前快照");
+                _logger?.Log(LogEntry.Create(LogLevel.Warning, "已自动回滚：构建失败后场景已恢复至生成前快照", stage: LogStage.Rollback));
             }
             else
             {
-                _logger?.LogError("自动回滚失败：场景可能残留本次生成物体，请检查 Console 日志或手动回滚");
+                _lastRollbackSucceeded = false;
+                _logger?.Log(LogEntry.Create(LogLevel.Error, "自动回滚失败：场景可能残留本次生成物体，请检查 Console 日志或手动回滚", stage: LogStage.Rollback));
             }
         }
 
         /// <summary>
         /// 统一校验错误日志格式（Day2）：`code：message（dataPath）` 逐条列出，多条以「；」连接，
         /// 与现有失败汇总风格一致，错误信息清晰明确、定位到具体字段（验收标准）。
+        /// Day5 增强：在汇总行之外，每条错误追加一条结构化日志（错误码/字段定位/解决建议），
+        /// 供日志面板错误码高亮、级别筛选与建议提示（默认日志宿主按纯文本分发，兼容旧断言）。
         /// </summary>
         private void LogValidationErrors(string prefix, ValidationResult result)
         {
             if (result == null) return;
-            var joined = string.Join("；", result.Errors.Select(e =>
-                $"{e.Code}：{e.Message}{(string.IsNullOrEmpty(e.DataPath) ? "" : $"（{e.DataPath}）")}"));
-            _logger?.LogError($"{prefix}（{result.Errors.Count} 项）：{joined}");
+            var joined = string.Join("；", result.Errors.Select(e => ErrorFormatter.Format(e.Code, e.Message, e.DataPath)));
+            _logger?.Log(LogEntry.Create(LogLevel.Error, $"{prefix}（{result.Errors.Count} 项）：{joined}", stage: LogStage.Validation));
+            foreach (var e in result.Errors)
+                _logger?.Log(LogEntry.FromIssue(LogLevel.Error, e.Code, e.Message, e.DataPath, LogStage.Validation));
+        }
+
+        /// <summary>
+        /// 终态报告（Day5）：构建 GenerationReport → 输出一条结构化摘要日志（任何日志宿主可见）→
+        /// 触发 GenerationCompleted 事件（窗口渲染报告块 + 落盘归档由订阅方负责）。
+        /// 每次任务恰好调用一次（全部终态分支已覆盖）。
+        /// </summary>
+        private void EmitReport(GenerationRequest request, GenerationResult result, LevelBuildResult buildResult,
+            GenerationTaskState finalState, string statusTextOverride = null)
+        {
+            var report = _reportBuilder.Build(request, result, buildResult, finalState,
+                _lastRollbackTriggered, _lastRollbackSucceeded,
+                (float)_taskStopwatch.Elapsed.TotalSeconds, statusTextOverride);
+            _taskStopwatch.Reset();
+
+            // 摘要日志：级别按结果语义（成功绿 / 取消警告 / 失败红）
+            var level = finalState == GenerationTaskState.Success
+                ? LogLevel.Success
+                : statusTextOverride != null ? LogLevel.Warning : LogLevel.Error;
+            var rollbackText = _lastRollbackTriggered
+                ? _lastRollbackSucceeded ? "，回滚成功" : "，回滚失败"
+                : "";
+            _logger?.Log(LogEntry.Create(level,
+                $"[报告] {report.StatusText}：耗时 {report.TotalTimeSeconds:F1}s（LLM {report.LlmTimeSeconds:F1}s + 构建 {report.BuildTimeSeconds:F1}s），错误 {report.ErrorCount} 项 / 警告 {report.WarningCount} 项{rollbackText}",
+                stage: LogStage.Report));
+
+            GenerationCompleted?.Invoke(report);
         }
     }
 }

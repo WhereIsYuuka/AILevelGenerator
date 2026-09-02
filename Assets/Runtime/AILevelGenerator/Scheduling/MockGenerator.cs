@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using UnityEngine;
 // 数据层 TerrainData 与 UnityEngine.TerrainData 同名，别名消除歧义（见 CLAUDE.md 已知坑）
@@ -47,7 +48,7 @@ namespace AILevelGenerator.Runtime.Scheduling
                     Success = false,
                     Errors = new List<ValidationError>
                     {
-                        new() { Code = "DEMO_FAIL", Message = "模拟生成器演示失败路径（提示词含“失败”）" }
+                        new() { Code = ErrorCodes.DEMO_FAIL, Message = "模拟生成器演示失败路径（提示词含“失败”）" }
                     },
                     GenerationTime = (float)stopwatch.Elapsed.TotalSeconds
                 };

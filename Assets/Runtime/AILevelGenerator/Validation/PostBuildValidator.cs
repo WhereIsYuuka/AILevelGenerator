@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using AILevelGenerator.Runtime.Components;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using UnityEngine;
 
@@ -41,14 +42,14 @@ namespace AILevelGenerator.Runtime.Validation
             var result = new ValidationResult();
             if (data == null || data.Entities == null)
             {
-                AddError(result, "POST_ENTITIES_MISSING", "后置校验数据缺失（实体清单为空），无法校验构建完整性");
+                AddError(result, ErrorCodes.POST_ENTITIES_MISSING, "后置校验数据缺失（实体清单为空），无法校验构建完整性");
                 return result;
             }
 
             // 数量一致性：构建报告数 ≠ 实际实体数 → 构建器实例化异常（漏/多余），逐实体检查已无意义
             if (data.ExpectedCount > 0 && data.Entities.Count != data.ExpectedCount)
             {
-                AddError(result, "POST_COUNT_MISMATCH",
+                AddError(result, ErrorCodes.POST_COUNT_MISMATCH,
                     $"实体数量不一致：构建报告 {data.ExpectedCount} 个，实际 {data.Entities.Count} 个",
                     "entities");
                 return result;
@@ -59,7 +60,7 @@ namespace AILevelGenerator.Runtime.Validation
             var reachabilityEnabled = _checkReachability;
             if (reachabilityEnabled && _groundedOverride == null && !GroundProbe(data.Entities))
             {
-                AddWarning(result, "POST_GROUND_MISSING",
+                AddWarning(result, ErrorCodes.POST_GROUND_MISSING,
                     "未探测到地面碰撞体，已跳过逻辑可达性检查（编辑场景无地面属正常降级）");
                 reachabilityEnabled = false;
             }
@@ -72,7 +73,7 @@ namespace AILevelGenerator.Runtime.Validation
                 // 1) 实体空引用
                 if (entity == null)
                 {
-                    AddError(result, "POST_ENTITY_NULL", "实体为空引用（构建器实例化中断或异常清理的痕迹）", path);
+                    AddError(result, ErrorCodes.POST_ENTITY_NULL, "实体为空引用（构建器实例化中断或异常清理的痕迹）", path);
                     continue;
                 }
 
@@ -89,7 +90,7 @@ namespace AILevelGenerator.Runtime.Validation
                             if (type == null) continue; // 类型不可解析 = 配置问题（绑定期已告警），非实体缺陷
                             if (entity.GetComponent(type) == null)
                             {
-                                AddError(result, "POST_COMPONENT_MISSING",
+                                AddError(result, ErrorCodes.POST_COMPONENT_MISSING,
                                     $"实体缺少绑定组件 [{entry.ComponentTypeName}]，组件完整性校验失败",
                                     $"{path}.components[{entry.ComponentTypeName}]");
                             }
@@ -103,7 +104,7 @@ namespace AILevelGenerator.Runtime.Validation
                     var grounded = _groundedOverride != null ? _groundedOverride(entity) : IsGrounded(entity);
                     if (!grounded)
                     {
-                        AddError(result, "POST_FLOAT_UNSUPPORTED",
+                        AddError(result, ErrorCodes.POST_FLOAT_UNSUPPORTED,
                             "实体悬空无地面支撑，逻辑上不可达（放置/地面适配失败）", path);
                     }
                 }

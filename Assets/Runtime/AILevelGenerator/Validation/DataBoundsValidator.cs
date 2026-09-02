@@ -1,4 +1,5 @@
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using UnityEngine;
 
@@ -20,13 +21,13 @@ namespace AILevelGenerator.Runtime.Validation
             var result = new ValidationResult();
             if (data == null)
             {
-                AddError(result, "DATA_NULL", "校验数据为空（LevelData 为 null）");
+                AddError(result, ErrorCodes.DATA_NULL, "校验数据为空（LevelData 为 null）");
                 return result;
             }
 
             // 玩家出生点坐标超限
             if (HasOutOfRangeComponent(data.PlayerStartPosition))
-                AddError(result, "DATA_POSITION_OUT_OF_RANGE", $"出生点坐标超出允许范围（|分量| ≤ {MaxCoordinate}）：{data.PlayerStartPosition}", "playerStartPosition");
+                AddError(result, ErrorCodes.DATA_POSITION_OUT_OF_RANGE, $"出生点坐标超出允许范围（|分量| ≤ {MaxCoordinate}）：{data.PlayerStartPosition}", "playerStartPosition");
 
             // 道具数值边界
             if (data.Props != null)
@@ -36,15 +37,15 @@ namespace AILevelGenerator.Runtime.Validation
                     var prop = data.Props[i];
                     var index = i;
                     if (!IsFiniteVector3(prop.Position))
-                        AddError(result, "DATA_NAN_OR_INFINITE", $"道具位置数值非法（NaN 或 Infinity）：{prop.Position}", $"props[{index}].position");
+                        AddError(result, ErrorCodes.DATA_NAN_OR_INFINITE, $"道具位置数值非法（NaN 或 Infinity）：{prop.Position}", $"props[{index}].position");
                     if (!IsFiniteVector3(prop.Rotation))
-                        AddError(result, "DATA_NAN_OR_INFINITE", $"道具旋转数值非法（NaN 或 Infinity）：{prop.Rotation}", $"props[{index}].rotation");
+                        AddError(result, ErrorCodes.DATA_NAN_OR_INFINITE, $"道具旋转数值非法（NaN 或 Infinity）：{prop.Rotation}", $"props[{index}].rotation");
                     if (!IsFiniteVector3(prop.Scale))
-                        AddError(result, "DATA_NAN_OR_INFINITE", $"道具缩放数值非法（NaN 或 Infinity）：{prop.Scale}", $"props[{index}].scale");
+                        AddError(result, ErrorCodes.DATA_NAN_OR_INFINITE, $"道具缩放数值非法（NaN 或 Infinity）：{prop.Scale}", $"props[{index}].scale");
                     if (prop.Scale.x <= 0f || prop.Scale.y <= 0f || prop.Scale.z <= 0f)
-                        AddError(result, "DATA_SCALE_INVALID", $"道具缩放值必须大于 0：{prop.Scale}（零/负缩放会导致物体不可见）", $"props[{index}].scale");
+                        AddError(result, ErrorCodes.DATA_SCALE_INVALID, $"道具缩放值必须大于 0：{prop.Scale}（零/负缩放会导致物体不可见）", $"props[{index}].scale");
                     if (HasOutOfRangeComponent(prop.Position))
-                        AddError(result, "DATA_POSITION_OUT_OF_RANGE", $"道具坐标超出允许范围（|分量| ≤ {MaxCoordinate}）：{prop.Position}", $"props[{index}].position");
+                        AddError(result, ErrorCodes.DATA_POSITION_OUT_OF_RANGE, $"道具坐标超出允许范围（|分量| ≤ {MaxCoordinate}）：{prop.Position}", $"props[{index}].position");
                 }
             }
 
@@ -52,11 +53,11 @@ namespace AILevelGenerator.Runtime.Validation
             if (data.Terrain != null)
             {
                 if (data.Terrain.Width < 1 || data.Terrain.Width > MaxTerrainSize)
-                    AddError(result, "DATA_TERRAIN_INVALID", $"地形宽度超出允许范围（1~{MaxTerrainSize}）：{data.Terrain.Width}", "terrain.width");
+                    AddError(result, ErrorCodes.DATA_TERRAIN_INVALID, $"地形宽度超出允许范围（1~{MaxTerrainSize}）：{data.Terrain.Width}", "terrain.width");
                 if (data.Terrain.Length < 1 || data.Terrain.Length > MaxTerrainSize)
-                    AddError(result, "DATA_TERRAIN_INVALID", $"地形长度超出允许范围（1~{MaxTerrainSize}）：{data.Terrain.Length}", "terrain.length");
+                    AddError(result, ErrorCodes.DATA_TERRAIN_INVALID, $"地形长度超出允许范围（1~{MaxTerrainSize}）：{data.Terrain.Length}", "terrain.length");
                 if (data.Terrain.HeightScale <= 0f || data.Terrain.HeightScale > MaxTerrainHeightScale)
-                    AddError(result, "DATA_TERRAIN_INVALID", $"地形高度缩放超出允许范围（0~{MaxTerrainHeightScale}）：{data.Terrain.HeightScale}", "terrain.heightScale");
+                    AddError(result, ErrorCodes.DATA_TERRAIN_INVALID, $"地形高度缩放超出允许范围（0~{MaxTerrainHeightScale}）：{data.Terrain.HeightScale}", "terrain.heightScale");
             }
 
             // 任务 ID 完整性：空 / 重复（HashSet 去重，DataPath 定位具体任务）
@@ -69,11 +70,11 @@ namespace AILevelGenerator.Runtime.Validation
                     var path = $"tasks[{i}].taskID";
                     if (task == null || string.IsNullOrWhiteSpace(task.TaskID))
                     {
-                        AddError(result, "DATA_TASK_ID_EMPTY", "任务 ID 为空", path);
+                        AddError(result, ErrorCodes.DATA_TASK_ID_EMPTY, "任务 ID 为空", path);
                         continue;
                     }
                     if (!seen.Add(task.TaskID))
-                        AddError(result, "DATA_TASK_ID_DUPLICATE", $"任务 ID 重复：{task.TaskID}", path);
+                        AddError(result, ErrorCodes.DATA_TASK_ID_DUPLICATE, $"任务 ID 重复：{task.TaskID}", path);
                 }
             }
 

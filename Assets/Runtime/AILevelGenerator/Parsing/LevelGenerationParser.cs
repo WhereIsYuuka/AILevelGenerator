@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using UnityEngine;
 // Runtime.Data.TerrainData 与 UnityEngine.TerrainData 同名 → 本地别名消歧
 using TerrainData = AILevelGenerator.Runtime.Data.TerrainData;
@@ -45,7 +46,7 @@ namespace AILevelGenerator.Runtime.Parsing
                 var result = new LevelParseResult { IsValid = false };
                 result.Errors.Add(new ValidationError
                 {
-                    Code = "PARSE_FAILED",
+                    Code = ErrorCodes.PARSE_FAILED,
                     Message = $"LLM 输出不是合法 JSON：{e.Message}",
                     DataPath = "llm_response"
                 });
@@ -62,7 +63,7 @@ namespace AILevelGenerator.Runtime.Parsing
                 var failed = new LevelParseResult { IsValid = false };
                 failed.Errors.Add(new ValidationError
                 {
-                    Code = "NOT_OBJECT",
+                    Code = ErrorCodes.NOT_OBJECT,
                     Message = "LLM 输出顶层应为 JSON 对象",
                     DataPath = "llm_response"
                 });
@@ -261,6 +262,6 @@ namespace AILevelGenerator.Runtime.Parsing
         }
 
         private static void AddWarning(List<ValidationWarning> warnings, string dataPath, string message) =>
-            warnings.Add(new ValidationWarning { Code = "PARSE_FALLBACK", Message = message, DataPath = dataPath });
+            warnings.Add(new ValidationWarning { Code = ErrorCodes.PARSE_FALLBACK, Message = message, DataPath = dataPath });
     }
 }

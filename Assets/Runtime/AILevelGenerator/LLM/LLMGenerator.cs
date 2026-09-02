@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.Parsing;
@@ -58,7 +59,7 @@ namespace AILevelGenerator.Runtime.LLM
                     result.Success = false;
                     result.Errors.Add(new ValidationError
                     {
-                        Code = "NO_API_KEY",
+                        Code = ErrorCodes.NO_API_KEY,
                         Message = "未配置 DeepSeek API Key（请先在「API 设置」中保存 Key）"
                     });
                     return result;
@@ -94,7 +95,7 @@ namespace AILevelGenerator.Runtime.LLM
             catch (DeepSeekException e)
             {
                 result.Success = false;
-                result.Errors.Add(new ValidationError { Code = "LLM_ERROR", Message = e.FriendlyMessage });
+                result.Errors.Add(new ValidationError { Code = ErrorCodes.LLM_ERROR, Message = e.FriendlyMessage });
                 return result;
             }
             catch (Exception e)
@@ -102,7 +103,7 @@ namespace AILevelGenerator.Runtime.LLM
                 result.Success = false;
                 result.Errors.Add(new ValidationError
                 {
-                    Code = "LLM_ERROR",
+                    Code = ErrorCodes.LLM_ERROR,
                     Message = $"生成失败：{e.Message}"
                 });
                 return result;
@@ -186,15 +187,15 @@ namespace AILevelGenerator.Runtime.LLM
             if (template is ConfigurableLevelTemplate config)
             {
                 if (config.MaxPropCount > 0 && parse.Level.Props.Count > config.MaxPropCount)
-                    AddScopeWarning(warnings, "PROPS_TOO_MANY", $"道具数量 {parse.Level.Props.Count} 超过模板上限 {config.MaxPropCount}");
+                    AddScopeWarning(warnings, ErrorCodes.PROPS_TOO_MANY, $"道具数量 {parse.Level.Props.Count} 超过模板上限 {config.MaxPropCount}");
                 if (config.MinPropCount > 0 && parse.Level.Props.Count < config.MinPropCount)
-                    AddScopeWarning(warnings, "PROPS_TOO_FEW", $"道具数量 {parse.Level.Props.Count} 低于模板下限 {config.MinPropCount}");
+                    AddScopeWarning(warnings, ErrorCodes.PROPS_TOO_FEW, $"道具数量 {parse.Level.Props.Count} 低于模板下限 {config.MinPropCount}");
                 if (config.MaxTaskCount > 0 && parse.Level.Tasks.Count > config.MaxTaskCount)
-                    AddScopeWarning(warnings, "TASKS_TOO_MANY", $"任务数量 {parse.Level.Tasks.Count} 超过模板上限 {config.MaxTaskCount}");
+                    AddScopeWarning(warnings, ErrorCodes.TASKS_TOO_MANY, $"任务数量 {parse.Level.Tasks.Count} 超过模板上限 {config.MaxTaskCount}");
                 if (config.MinTaskCount > 0 && parse.Level.Tasks.Count < config.MinTaskCount)
-                    AddScopeWarning(warnings, "TASKS_TOO_FEW", $"任务数量 {parse.Level.Tasks.Count} 低于模板下限 {config.MinTaskCount}");
+                    AddScopeWarning(warnings, ErrorCodes.TASKS_TOO_FEW, $"任务数量 {parse.Level.Tasks.Count} 低于模板下限 {config.MinTaskCount}");
                 if (config.ForceMainTask && !HasMainTask(parse.Level.Tasks))
-                    AddScopeWarning(warnings, "NO_MAIN_TASK", "模板要求存在主线任务，但生成结果没有 IsMainTask=true 的任务");
+                    AddScopeWarning(warnings, ErrorCodes.NO_MAIN_TASK, "模板要求存在主线任务，但生成结果没有 IsMainTask=true 的任务");
             }
         }
 

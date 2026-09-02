@@ -103,6 +103,25 @@
     flex-direction: column;
 }
 
+/* 第四周-Day5：日志级别筛选行（信息/警告/错误/成功） */
+.log-filter-row {
+    flex-direction: row;
+    margin-bottom: 8px;
+}
+
+.filter-toggle {
+    margin-right: 12px;
+    font-size: 12px;
+    color: #a0a0a0;
+}
+
+/* 第四周-Day5：生成报告区（任务终态时显示，折叠在日志下方，不挤压日志主区） */
+.report-section {
+    flex-shrink: 0;
+    max-height: 200px;
+    margin-top: 12px;
+}
+
 .log-scroll {
     flex: 1;
     background-color: #1e1e1e;

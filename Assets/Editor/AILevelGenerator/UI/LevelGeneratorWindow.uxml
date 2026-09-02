@@ -43,8 +43,20 @@
         <ui:ProgressBar name="progress-bar" title="等待任务" low-value="0" high-value="100" class="progress-bar" style="display: none; height: 18px;"/>
         <ui:VisualElement class="section log-section">
             <ui:Label text="运行日志" class="section-title"/>
+            <ui:VisualElement class="log-filter-row">
+                <ui:Toggle name="filter-info" label="信息" value="true" class="filter-toggle"/>
+                <ui:Toggle name="filter-warning" label="警告" value="true" class="filter-toggle"/>
+                <ui:Toggle name="filter-error" label="错误" value="true" class="filter-toggle"/>
+                <ui:Toggle name="filter-success" label="成功" value="true" class="filter-toggle"/>
+            </ui:VisualElement>
             <ui:ScrollView name="log-scroll" class="log-scroll">
                 <ui:Label name="log-content" text="等待生成任务...&#10;" class="log-content" style="font-size: 13px;"/>
+            </ui:ScrollView>
+        </ui:VisualElement>
+        <ui:VisualElement class="section report-section" name="report-section" style="display: none;">
+            <ui:Label text="生成报告（最近一次任务）" class="section-title"/>
+            <ui:ScrollView name="report-scroll" class="log-scroll">
+                <ui:Label name="report-content" text="" class="log-content" style="font-size: 13px;"/>
             </ui:ScrollView>
         </ui:VisualElement>
     </ui:VisualElement>

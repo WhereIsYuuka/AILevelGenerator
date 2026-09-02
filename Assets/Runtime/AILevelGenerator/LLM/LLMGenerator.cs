@@ -78,8 +78,8 @@ namespace AILevelGenerator.Runtime.LLM
                     return result;
                 }
 
-                // 2. 模板默认值（地形兜底/覆盖） + 描述回填
-                template?.ApplyDefaults(parse.Level);
+                // 2. 模板统一收尾（Day5-W1：ApplyDefaults + 模板确定性随机内容 PostGenerate）
+                template?.FinalizeData(parse.Level, request.RandomSeed);
                 if (string.IsNullOrEmpty(parse.Level.Description))
                     parse.Level.Description = request.Prompt;
 

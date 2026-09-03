@@ -22,3 +22,13 @@ MonoBehaviour:
     Gold: 30
     ItemRewards: []
   DefaultTriggerCondition: "\u62FE\u53D6\u7269\u54C1"
+  CollectibleOptions:
+  - LogicalName: "\u91D1\u5E01"
+    Weight: 2
+  - LogicalName: "\u9053\u5177-\u751F\u547D\u836F\u6C34"
+    Weight: 1
+  MinCollectibleCount: 12
+  CollectSpawnRingMin: 6
+  CollectSpawnRingMax: 30
+  CollectMinSpacing: 2.5
+  CollectBoundsMargin: 3

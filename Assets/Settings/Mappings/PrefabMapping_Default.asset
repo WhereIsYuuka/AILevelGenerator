@@ -41,3 +41,14 @@ MonoBehaviour:
     - "\u654C\u4EBA"
     - "\u7CBE\u82F1"
     - Elite
+  - LogicalName: "\u91D1\u5E01"
+    Prefab: {fileID: 9107488837484818285, guid: 71a2b3c4d5e6f708192a3b4c5d6e7f80, type: 3}
+    Aliases:
+    - Coin
+    - "\u786C\u5E01"
+  - LogicalName: "\u9053\u5177-\u751F\u547D\u836F\u6C34"
+    Prefab: {fileID: 9207488837484818285, guid: c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5, type: 3}
+    Aliases:
+    - Potion
+    - "\u836F\u6C34"
+    - Health

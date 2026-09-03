@@ -80,6 +80,10 @@ namespace AILevelGenerator.Runtime.LLM
 
                 // 2. 模板统一收尾（Day5-W1：ApplyDefaults + 模板确定性随机内容 PostGenerate）
                 template?.FinalizeData(parse.Level, request.RandomSeed);
+                // 2.1 任务模板统一收尾（第五周-Day3：任务链路打通 —— 收集物散布等任务级随机内容）
+                // 按任务列表顺序逐任务匹配 TaskType 相同的任务模板资产（Provider 首个命中，无命中=不兜底）；
+                // 任务模板与关卡模板共用同一 requestSeed，各模板用 (seed, TemplateId) 派生独立随机流。
+                ApplyTaskTemplates(parse.Level, request.RandomSeed);
                 if (string.IsNullOrEmpty(parse.Level.Description))
                     parse.Level.Description = request.Prompt;
 
@@ -119,6 +123,35 @@ namespace AILevelGenerator.Runtime.LLM
         {
             if (_templateProvider == null || string.IsNullOrEmpty(request?.TemplateId)) return null;
             return _templateProvider.GetTemplateById(request.TemplateId);
+        }
+
+        /// <summary>
+        /// 任务模板统一收尾（Day3）：按任务列表顺序逐任务调用匹配任务模板的 FinalizeData。
+        /// 匹配规则：取 TaskType 与任务类型相同的第一个任务模板（Provider 注入顺序）；
+        /// 无任务模板/无匹配 = 空转（任务原样保留，既有无任务模板的调用方零影响）。
+        /// 任务模板收尾在关卡模板收尾之后执行：收集物兜底等追加的 Props 会参与后续规模警告与数据级校验。
+        /// </summary>
+        private void ApplyTaskTemplates(LevelData level, int requestSeed)
+        {
+            var templates = _templateProvider?.GetTaskTemplates();
+            if (templates == null || level?.Tasks == null || level.Tasks.Count == 0) return;
+
+            foreach (var task in level.Tasks)
+            {
+                if (task == null) continue; // 容错：空任务跳过（解析层已防，此处双保险）
+                var taskTemplate = MatchTaskTemplate(templates, task.Type);
+                taskTemplate?.FinalizeData(task, level, requestSeed);
+            }
+        }
+
+        /// <summary> 按任务类型取第一个匹配的任务模板（未命中返回 null） </summary>
+        private static TaskTemplate MatchTaskTemplate(IReadOnlyList<TaskTemplate> templates, TaskType type)
+        {
+            if (templates == null) return null;
+            foreach (var t in templates)
+                if (t != null && t.TaskType == type)
+                    return t;
+            return null;
         }
 
         /// <summary> Prompt 组装：默认 Prompt 模板 + 插值上下文（模板指南/资源清单/开关/种子） </summary>

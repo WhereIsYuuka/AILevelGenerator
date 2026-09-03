@@ -27,12 +27,13 @@ namespace AILevelGenerator.Tests.EditMode
         }
     }
 
-    /// <summary> 测试用确定性任务模板：PostGenerate 写回一个随机描述（证明任务侧生命周期同构） </summary>
+    /// <summary> 测试用确定性任务模板：PostGenerate 写回一个随机描述（证明任务侧生命周期同构）。
+    /// Day3 起钩子签名带关卡数据（可为 null，仅默认值路径仍可用） </summary>
     public class 散点测试任务模板 : TaskTemplate
     {
         public override void ApplyDefaults(TaskData taskData) { }
 
-        protected override void PostGenerate(TaskData taskData, DeterministicRandom rng)
+        protected override void PostGenerate(TaskData taskData, LevelData levelData, DeterministicRandom rng)
         {
             taskData.Description = $"数量 {rng.Range(1, 20)}，间隔 {rng.Range(0f, 10f):F3}";
         }
@@ -100,11 +101,11 @@ namespace AILevelGenerator.Tests.EditMode
             var t = new 散点测试任务模板 { TemplateId = "收集测试" };
             var a = new TaskData();
             var b = new TaskData();
-            t.FinalizeData(a, 9);
-            t.FinalizeData(b, 9);
+            t.FinalizeData(a, null, 9);
+            t.FinalizeData(b, null, 9);
             Assert.AreEqual(a.Description, b.Description, "同种子任务模板输出必须一致");
             var c = new TaskData();
-            t.FinalizeData(c, 10);
+            t.FinalizeData(c, null, 10);
             Assert.AreNotEqual(a.Description, c.Description, "不同种子任务模板输出必须不同");
         }
 
@@ -112,7 +113,36 @@ namespace AILevelGenerator.Tests.EditMode
         public void TaskFinalizeData_数据为空_静默返回()
         {
             var t = new 散点测试任务模板 { TemplateId = "收集测试" };
-            Assert.DoesNotThrow(() => t.FinalizeData(null, 42));
+            Assert.DoesNotThrow(() => t.FinalizeData(null, null, 42));
+        }
+
+        [Test]
+        public void TaskFinalizeData_任务不在关卡列表_退化为原派生流不抛()
+        {
+            // levelData 非空但任务不在列表（引用不一致/外部构造）：跳过任务槽盐，按 Day1 原派生流收尾
+            var t = new 散点测试任务模板 { TemplateId = "收集测试" };
+            var task = new TaskData();
+            var level = new LevelData();
+            Assert.DoesNotThrow(() => t.FinalizeData(task, level, 42));
+            Assert.IsNotEmpty(task.Description, "内容钩子仍应执行（任务槽盐缺失不阻断收尾）");
+        }
+
+        [Test]
+        public void TaskFinalizeData_任务槽独立流_不同序号内容不同()
+        {
+            // 同一模板 + 同一种子：两个任务分处不同槽位 → 独立子流 → 随机内容必须不同（防同型多任务产出完全相同的散点）
+            var t = new 散点测试任务模板 { TemplateId = "收集测试" };
+            var level = new LevelData { Tasks = { new TaskData(), new TaskData() } };
+            t.FinalizeData(level.Tasks[0], level, 9);
+            t.FinalizeData(level.Tasks[1], level, 9);
+            Assert.AreNotEqual(level.Tasks[0].Description, level.Tasks[1].Description,
+                "同种子不同槽位的任务必须拥有独立随机流");
+
+            // 同槽位 + 同种子 → 完全一致（确定性收尾）
+            var levelB = new LevelData { Tasks = { new TaskData(), new TaskData() } };
+            t.FinalizeData(levelB.Tasks[0], levelB, 9);
+            Assert.AreEqual(level.Tasks[0].Description, levelB.Tasks[0].Description,
+                "同槽位同种子必须逐字符一致");
         }
 
         private static LevelData RunOnce(int seed, string templateId = "散布测试")

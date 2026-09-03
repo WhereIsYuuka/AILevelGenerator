@@ -23,7 +23,7 @@ MonoBehaviour:
   TerrainLength: 200
   TerrainHeightScale: 8
   MinPropCount: 5
-  MaxPropCount: 15
+  MaxPropCount: 40
   MinTaskCount: 3
   MaxTaskCount: 5
   ForceMainTask: 1

@@ -80,5 +80,44 @@ namespace AILevelGenerator.Tests.EditMode
             Assert.AreNotEqual(a, c, "提示词不同哈希必须不同");
             Assert.AreNotEqual(0UL, a, "空输入哈希不为 0（避免误判空缓存）");
         }
+
+        // —— 第五周-Day5：模板依赖哈希 / Schema 版本参与键（模板资产变更自动失效） ——
+
+        [Test]
+        public void 键_依赖哈希不同_键不同()
+        {
+            var a = GenerationCache.BuildKey("tpl", 1, "p", 100UL, 1);
+            var b = GenerationCache.BuildKey("tpl", 1, "p", 200UL, 1);
+
+            Assert.AreNotEqual(a, b, "模板依赖哈希不同（资产变更）键必须不同");
+        }
+
+        [Test]
+        public void 键_Schema版本不同_键不同()
+        {
+            var a = GenerationCache.BuildKey("tpl", 1, "p", 100UL, 1);
+            var b = GenerationCache.BuildKey("tpl", 1, "p", 100UL, 2);
+
+            Assert.AreNotEqual(a, b, "Schema 契约版本不同键必须不同");
+        }
+
+        [Test]
+        public void 键_旧三参入口_等价于哈希版本为零()
+        {
+            Assert.AreEqual(
+                GenerationCache.BuildKey("tpl", 42, "提示词"),
+                GenerationCache.BuildKey("tpl", 42, "提示词", 0UL, 0),
+                "旧三参入口语义应等价于依赖哈希/版本为零（既有调用方零改动）");
+        }
+
+        [Test]
+        public void 缓存_依赖哈希变化_旧条目不命中()
+        {
+            var cache = new GenerationCache();
+            cache.Put("tpl", 42, "设计一个营地", 100UL, 1, "{}");
+
+            Assert.IsFalse(cache.TryGet("tpl", 42, "设计一个营地", 200UL, 1, out _), "哈希不同（资产已变更）不应命中旧条目");
+            Assert.IsTrue(cache.TryGet("tpl", 42, "设计一个营地", 100UL, 1, out _), "哈希一致应命中");
+        }
     }
 }

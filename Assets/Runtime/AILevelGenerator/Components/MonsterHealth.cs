@@ -4,7 +4,7 @@ using UnityEngine;
 namespace AILevelGenerator.Runtime.Components
 {
     /// <summary>
-    /// 演示组件（Week3-Day4）：怪物血量。配置参数键 maxHealth（整数字符串）。
+    /// 演示组件（第三周-Day4）：怪物血量。配置参数键 maxHealth（整数字符串）。
     /// 实现 IBindableComponent 走显式装配：非法值保持默认并警告，永不抛异常（绑定链路不中断）。
     /// </summary>
     public class MonsterHealth : MonoBehaviour, IBindableComponent

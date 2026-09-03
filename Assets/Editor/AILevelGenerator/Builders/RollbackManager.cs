@@ -6,10 +6,10 @@ using UnityEngine;
 namespace AILevelGenerator.Editor.Builders
 {
     /// <summary>
-    /// 回滚管理器（Day3 最小实现）：增量取消 —— 分帧销毁被追踪的生成根物体。
+    /// 回滚管理器（裸 DayN 均指第四周；Day3 最小实现）：增量取消 —— 分帧销毁被追踪的生成根物体。
     /// 复用 EditorCoroutine 分帧机制（每帧最多销毁一批子物体），删除过程不阻塞编辑器（验收：取消无卡顿）。
     /// 场景原有内容完全保留（只删登记过的生成根，不涉及快照）。
-    /// 第四周扩展：场景快照保存/恢复作为全量回滚兜底（本类届时补充）。
+    /// 第四周-Day4 扩展：场景快照全量回滚由 SceneSnapshotManager 承担，本类保持增量删除职责。
     /// </summary>
     public class RollbackManager : IRollbackManager
     {

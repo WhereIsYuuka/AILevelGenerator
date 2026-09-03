@@ -4,7 +4,7 @@ namespace AILevelGenerator.Runtime.Templates
 {
     /// <summary>
     /// Prompt 模板资产：System/User 提示词模板文本，支持 {占位符} 插值（占位符清单见 PromptBuilder 与 ToolGuide）。
-    /// Day7 真实 LLM 接入时从此处取提示词结构，与关卡/任务模板、资源映射解耦。
+    /// PromptBuilder 组装请求时从此处取提示词结构（第四周-Day6 起启用），与关卡/任务模板、资源映射解耦。
     /// </summary>
     [CreateAssetMenu(fileName = "PromptTemplate", menuName = "AI Level Generator/Prompt 模板")]
     public class PromptTemplate : ScriptableObject

@@ -8,7 +8,7 @@ using UnityEngine;
 namespace AILevelGenerator.Tests.EditMode
 {
     /// <summary>
-    /// 模拟生成器边界测试（Week3-Day6 补全）：null 请求防御、可配置实体数量（性能基准）、
+    /// 模拟生成器边界测试（第三周-Day6 补全）：null 请求防御、可配置实体数量（性能基准）、
     /// 演示失败/异常路径、生成开关。全部用 0ms 延迟，零等待不 flaky。
     /// </summary>
     public class MockGeneratorTests

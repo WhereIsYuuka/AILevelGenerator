@@ -8,15 +8,17 @@ using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.Parsing;
 using AILevelGenerator.Runtime.Prompting;
+using UnityEngine;
 
 namespace AILevelGenerator.Runtime.LLM
 {
     /// <summary>
-    /// 真实 LLM 生成器（Day5 全链路编排）：请求 → Prompt 组装 → Function Calling 双重约束 →
+    /// 真实 LLM 生成器（第四周-Day6 接入，第五周-Day1/3/4/5 连续演进）：请求 → Prompt 组装 → Function Calling 双重约束 →
     /// API 调用 → 容错解析 → 模板默认值 → 规模/主线校验 → GenerationResult。
-    /// - 依赖注入（IDeepSeekClient / ITemplateManager / IResourceMapper / 缓存 / keyProvider），可单测不碰网络
+    /// - 依赖注入（IDeepSeekClient / ITemplateManager / IResourceMapper / 两级缓存 / keyProvider），可单测不碰网络
     /// - API key 经 keyProvider 注入检查（Runtime 程序集不引用 UnityEditor，EditorPrefs 由窗口侧闭包提供）
-    /// - 缓存命中直接重走解析管线返回，不调 API
+    /// - 第五周-Day5：缓存升级两级（内存 + 磁盘）；键含模板依赖哈希（资产变更自动失效）+ Schema 契约版本；
+    ///   命中直接重走解析/模板确定性收尾管线返回，不调 API
     /// - 异常全部转 GenerationResult.Errors（中文 FriendlyMessage），不向调度器抛
     /// </summary>
     public class LLMGenerator : IGenerator
@@ -25,7 +27,8 @@ namespace AILevelGenerator.Runtime.LLM
         private readonly Func<string> _apiKeyProvider;
         private readonly ITemplateManager _templateManager;
         private readonly IResourceMapper _resourceMapper;
-        private readonly GenerationCache _cache;
+        private readonly IGenerationCache _cache;
+        private readonly ITemplateDependencyHashProvider _dependencyHashProvider; // 可空：null = 缓存键不含依赖哈希（无资产模板路径）
         private readonly PromptBuilder _promptBuilder = new();
         private readonly bool _useJsonMode; // 双重约束开关（true=json_object + function calling；false=仅 function calling）
 
@@ -34,8 +37,9 @@ namespace AILevelGenerator.Runtime.LLM
             Func<string> apiKeyProvider,
             ITemplateManager templateManager,
             IResourceMapper resourceMapper,
-            GenerationCache cache = null,
-            bool useJsonMode = true)
+            IGenerationCache cache = null,
+            bool useJsonMode = true,
+            ITemplateDependencyHashProvider dependencyHashProvider = null)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _apiKeyProvider = apiKeyProvider;
@@ -43,6 +47,7 @@ namespace AILevelGenerator.Runtime.LLM
             _resourceMapper = resourceMapper;
             _cache = cache ?? new GenerationCache();
             _useJsonMode = useJsonMode;
+            _dependencyHashProvider = dependencyHashProvider;
         }
 
         public async Task<GenerationResult> GenerateAsync(GenerationRequest request)
@@ -77,16 +82,16 @@ namespace AILevelGenerator.Runtime.LLM
                     return result;
                 }
 
-                // 2. 模板统一收尾（Day5-W1：ApplyDefaults + 模板确定性随机内容 PostGenerate）
+                // 2. 模板统一收尾（第五周-Day1：ApplyDefaults + 模板确定性随机内容 PostGenerate）
                 template?.FinalizeData(parse.Level, request.RandomSeed);
-                // 2.1 任务模板统一收尾（第五周-Day3：任务链路打通 —— 收集物散布等任务级随机内容）
+                // 3. 任务模板统一收尾（第五周-Day3：任务链路打通 —— 收集物散布等任务级随机内容）
                 // 按任务列表顺序逐任务匹配 TaskType 相同的任务模板资产（Provider 首个命中，无命中=不兜底）；
                 // 任务模板与关卡模板共用同一 requestSeed，各模板用 (seed, TemplateId) 派生独立随机流。
                 ApplyTaskTemplates(parse.Level, request.RandomSeed);
                 if (string.IsNullOrEmpty(parse.Level.Description))
                     parse.Level.Description = request.Prompt;
 
-                // 3. 规模与主线校验（只警告不裁剪：模板注释约定裁剪职责在校验器，此处生成期提示）
+                // 4. 规模与主线校验（只警告不裁剪：模板注释约定裁剪职责在校验器，此处生成期提示）
                 ValidateScope(parse, template, result.Warnings);
 
                 result.Success = true;
@@ -125,7 +130,7 @@ namespace AILevelGenerator.Runtime.LLM
         }
 
         /// <summary>
-        /// 任务模板统一收尾（Day3）：按任务列表顺序逐任务调用匹配任务模板的 FinalizeData。
+        /// 任务模板统一收尾（第五周-Day3）：按任务列表顺序逐任务调用匹配任务模板的 FinalizeData。
         /// 匹配规则：取 TaskType 与任务类型相同的第一个任务模板（Provider 注入顺序）；
         /// 无任务模板/无匹配 = 空转（任务原样保留，既有无任务模板的调用方零影响）。
         /// 任务模板收尾在关卡模板收尾之后执行：收集物兜底等追加的 Props 会参与后续规模警告与数据级校验。
@@ -162,15 +167,21 @@ namespace AILevelGenerator.Runtime.LLM
             return _promptBuilder.Build(promptTemplate, context);
         }
 
-        /// <summary> 调用 API 并提取结构化内容（tool_calls.arguments 优先，content 兜底；缓存命中短路） </summary>
+        /// <summary> 调用 API 并提取结构化内容（tool_calls.arguments 优先，content 兜底；两级缓存命中短路） </summary>
         private async Task<string> GenerateRawJsonAsync(GenerationRequest request, LevelTemplate template, PromptBuildResult prompt)
         {
             var seed = request?.RandomSeed ?? 0;
             var templateId = request?.TemplateId ?? string.Empty;
             var promptText = request?.Prompt ?? string.Empty;
+            // 模板依赖哈希（资产变更 → 键变 → 自动失效）+ Schema 契约版本（代码级 Schema 变更防旧缓存复用）
+            var dependencyHash = _dependencyHashProvider?.GetDependencyHash(template) ?? 0UL;
+            var schemaVersion = LevelGenerationSchema.SchemaVersion;
 
-            if (_cache.TryGet(templateId, seed, promptText, out var cached))
-                return cached; // 缓存命中：重走解析管线，与新鲜请求同路径
+            if (_cache.TryGet(templateId, seed, promptText, dependencyHash, schemaVersion, out var cached))
+            {
+                UnityEngine.Debug.Log($"[AI Generator] 生成缓存命中（未调用 LLM API）：模板 {templateId} | 种子 {seed}（模板资产未变更时重复生成秒回）");
+                return cached; // 缓存命中：重走解析 + 模板确定性收尾，与新鲜请求同路径
+            }
 
             var resourceNames = _resourceMapper?.GetAllLogicalNames();
             var chatRequest = new DeepSeekChatRequest
@@ -192,7 +203,7 @@ namespace AILevelGenerator.Runtime.LLM
             if (raw == null)
                 throw new ParseException("模型未返回可解析的结构化内容（tool_calls 与 content 均为空）");
 
-            _cache.Put(templateId, seed, promptText, raw);
+            _cache.Put(templateId, seed, promptText, dependencyHash, schemaVersion, raw);
             return raw;
         }
 

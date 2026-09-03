@@ -6,7 +6,7 @@ using UnityEngine;
 namespace AILevelGenerator.Editor.Builders
 {
     /// <summary>
-    /// NavMesh 播放模式守卫（Week3-Day5）：进入播放模式时自动重新烘焙全局 NavMesh。
+    /// NavMesh 播放模式守卫（第三周-Day5）：进入播放模式时自动重新烘焙全局 NavMesh。
     /// 背景：NavMesh.AddNavMeshData 注册的是**运行时数据**，域重载（脚本重编译/进出播放模式）
     /// 会将其全部清空——若用户「生成关卡 → 直接进播放模式」，agent 初始化时无 NavMesh，
     /// 控制台报 "Failed to create agent because there is no valid NavMesh"。

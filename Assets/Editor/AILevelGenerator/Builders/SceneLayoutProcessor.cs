@@ -102,7 +102,7 @@ namespace AILevelGenerator.Editor.Builders
         /// <summary>
         /// 候选对粗筛：OverlapSphere 命中 b 的 Collider 即候选（需求要求的检测手段）。
         /// 兜底：EditMode 下运行时动态创建的 Collider 可能尚未注册进物理场景（OverlapSphere 查询不到，
-        /// 见 ToolGuide Week3-Day2"已知坑"），故再叠加纯几何的包围球相交判定 —— 判定偏松只会让
+        /// 见 ToolGuide 第三周-Day2"已知坑"），故再叠加纯几何的包围球相交判定 —— 判定偏松只会让
         /// TrySeparate 空跑一次（不重叠返回 false），不会产生错误分离。
         /// </summary>
         private static bool IsCandidatePair(GameObject a, GameObject b, LayoutObject la, LayoutObject lb)

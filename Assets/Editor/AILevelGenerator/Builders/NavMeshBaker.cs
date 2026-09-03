@@ -7,7 +7,7 @@ using UnityEngine.AI;
 namespace AILevelGenerator.Editor.Builders
 {
     /// <summary>
-    /// 环境自动适配（Week3-Day5）：全局 NavMesh 烘焙器（Editor 侧执行体）。
+    /// 环境自动适配（第三周-Day5）：全局 NavMesh 烘焙器（Editor 侧执行体）。
     /// 链路：全场景收集几何源（PhysicsColliders，按碰撞体烘焙——可走性语义）→ 计算世界范围
     /// → BuildNavMeshData（同步）→ AddNavMeshData 注册运行时数据（NavMesh.SamplePosition 即可查询，
     /// NavMeshAgent 可识别）。
@@ -88,7 +88,7 @@ namespace AILevelGenerator.Editor.Builders
         /// 1. 基础形状（Box/Capsule/Sphere…）：source.size 为形状尺寸（局部），经 source.transform 的 8 角点变换取并集；
         /// 2. Mesh 形状（如 MeshCollider）：CollectSources 输出的 source.size 恒为 (0,0,0)（实测），
         ///    尺寸须从 source.component（Collider）的世界包围盒取——Collider.bounds 由 transform+形状数学计算，
-        ///    不依赖物理引擎注册（EditMode 动态 Collider 也有效，见 Week3-Day2 已知坑）。
+        ///    不依赖物理引擎注册（EditMode 动态 Collider 也有效，见 第三周-Day2 已知坑）。
         /// </summary>
         private static Bounds ComputeWorldBounds(List<NavMeshBuildSource> sources)
         {

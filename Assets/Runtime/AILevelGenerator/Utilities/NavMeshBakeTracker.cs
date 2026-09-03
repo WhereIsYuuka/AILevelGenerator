@@ -1,7 +1,7 @@
 namespace AILevelGenerator.Runtime.Utilities
 {
     /// <summary>
-    /// NavMesh 烘焙状态（Week3-Day5）：Ready → Baking → Completed / Failed。
+    /// NavMesh 烘焙状态（第三周-Day5）：Ready → Baking → Completed / Failed。
     /// 纯逻辑状态记录（可单测）；实际烘焙执行在编辑器侧 NavMeshBaker。
     /// 状态文案同时用于「烘焙中」提示（DisplayProgressBar）与日志输出——用户可感知，不误以为卡死。
     /// </summary>

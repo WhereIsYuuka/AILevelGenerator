@@ -19,7 +19,7 @@ using Debug = UnityEngine.Debug;
 namespace AILevelGenerator.Editor.Tools
 {
     /// <summary>
-    /// 全链路联调驱动器（Week3-Day6/7）：输入 → 生成 → 构建（分帧+自适应+组件绑定）→ NavMesh 烘焙 的完整链路验收。
+    /// 全链路联调驱动器（第三周-Day6/7）：输入 → 生成 → 构建（分帧+自适应+组件绑定）→ NavMesh 烘焙 的完整链路验收。
     /// 为隔离性与可复现性，绕过 ServiceLocator 自建链路：MockGenerator（0ms 延迟，确定性数据）
     /// → GeneratorScheduler → SceneLevelBuilder（真实资源映射/回滚/组件绑定/NavMesh 烘焙）。
     /// 提供三项验收能力：

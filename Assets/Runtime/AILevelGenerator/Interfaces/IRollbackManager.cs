@@ -3,7 +3,7 @@ using UnityEngine;
 namespace AILevelGenerator.Runtime.Interfaces
 {
     /// <summary>
-    /// 回滚管理器接口（Week3-Day3 定义，实现体第四周完善）：
+    /// 回滚管理器接口（第三周-Day3 定义，实现体第四周完善）：
     /// 统一"删除本次生成物体"的入口 —— 调度器/构建器只依赖本接口，不直接 DestroyImmediate。
     /// 第三周最小实现：增量删除（分帧销毁生成根物体，场景原有内容完全保留，不涉及快照）；
     /// 第四周扩展：场景快照保存/恢复作为全量回滚兜底（实现体在 RollbackManager 内补充）。

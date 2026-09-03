@@ -74,12 +74,13 @@ namespace AILevelGenerator.Tests.EditMode
             _created.Clear();
         }
 
-        /// <summary> 构造生成器：内存模板 + 默认 key + 无缓存隔离 </summary>
+        /// <summary> 构造生成器：内存模板 + 默认 key + 无缓存隔离（dependencyHashProvider 可空 = 键不含依赖哈希） </summary>
         private LLMGenerator CreateGenerator(
             string templateId = null,
             Func<string> keyProvider = null,
             GenerationCache cache = null,
-            bool useJsonMode = true)
+            bool useJsonMode = true,
+            ITemplateDependencyHashProvider dependencyHashProvider = null)
         {
             var levelTemplate = NewTemplate<ConfigurableLevelTemplate>();
             levelTemplate.TemplateId = templateId ?? "tpl1";
@@ -101,7 +102,15 @@ namespace AILevelGenerator.Tests.EditMode
                 manager,
                 new FakeResourceMapper("敌人-弓箭手", "宝箱", "NPC"),
                 cache,
-                useJsonMode);
+                useJsonMode,
+                dependencyHashProvider);
+        }
+
+        /// <summary> 可变的假依赖哈希提供器（模拟模板资产内容变更 → 哈希变化） </summary>
+        private class FakeDependencyHashProvider : ITemplateDependencyHashProvider
+        {
+            public ulong Value;
+            public ulong GetDependencyHash(LevelTemplate template) => Value;
         }
 
         private T NewTemplate<T>() where T : ScriptableObject
@@ -249,6 +258,36 @@ namespace AILevelGenerator.Tests.EditMode
             Assert.IsFalse(first.Success);
             Assert.IsTrue(second.Success, "失败后重试应重新调用（不缓存失败）");
             Assert.AreEqual(2, _client.CallCount);
+        }
+
+        [Test]
+        public async Task 缓存_模板依赖哈希变化_旧条目自动失效重新调API()
+        {
+            var provider = new FakeDependencyHashProvider { Value = 100UL };
+            var cache = new GenerationCache();
+            var generator = CreateGenerator(cache: cache, dependencyHashProvider: provider);
+            var request = SimpleRequest();
+
+            await generator.GenerateAsync(request);
+            await generator.GenerateAsync(request);
+            Assert.AreEqual(1, _client.CallCount, "依赖哈希未变：同参二次命中缓存");
+
+            provider.Value = 200UL; // 模拟模板资产内容变更（AssetDatabase.GetAssetDependencyHash 变化）
+            await generator.GenerateAsync(request);
+
+            Assert.AreEqual(2, _client.CallCount, "依赖哈希变化后旧条目应自动失效并重新调 API");
+        }
+
+        [Test]
+        public async Task 缓存_无依赖哈希提供器_同参仍命中()
+        {
+            // 提供器为 null（无资产模板路径）→ 键退化为不含哈希组件，同参命中不受影响（兼容既有行为）
+            var cache = new GenerationCache();
+            var generator = CreateGenerator(cache: cache);
+            await generator.GenerateAsync(SimpleRequest());
+            await generator.GenerateAsync(SimpleRequest());
+
+            Assert.AreEqual(1, _client.CallCount);
         }
 
         // —— 模板校验 ——

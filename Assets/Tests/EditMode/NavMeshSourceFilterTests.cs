@@ -6,7 +6,7 @@ using UnityEngine.AI;
 namespace AILevelGenerator.Tests.EditMode
 {
     /// <summary>
-    /// NavMesh 烘焙源过滤器单元测试（Week3-Day5）：实体自身不应作为 NavMesh 障碍物。
+    /// NavMesh 烘焙源过滤器单元测试（第三周-Day5）：实体自身不应作为 NavMesh 障碍物。
     /// 判定纯逻辑（IsUnderRoot）；剔除执行在编辑器侧 NavMeshBaker（端到端验证）。
     /// </summary>
     public class NavMeshSourceFilterTests

@@ -5,7 +5,7 @@ using UnityEngine;
 namespace AILevelGenerator.Runtime.Components
 {
     /// <summary>
-    /// 组件绑定配置表（Week3-Day4）：按逻辑名（对应 PropPlacement.PrefabLogicalName）组织，
+    /// 组件绑定配置表（第三周-Day4）：按逻辑名（对应 PropPlacement.PrefabLogicalName）组织，
     /// 每条逻辑名关联一组"组件绑定条目"——组件类型（全限定名字符串）+ 参数键值对。
     /// 与 PrefabMappingConfig（逻辑名 → 预制体）解耦：资源映射管"实例化什么"，
     /// 组件绑定管"实例化后挂什么逻辑组件"，策划各自独立配置。

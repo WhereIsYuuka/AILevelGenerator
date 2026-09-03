@@ -10,7 +10,9 @@ using AILevelGenerator.Runtime.Scheduling;
 using AILevelGenerator.Runtime.Templates;
 using AILevelGenerator.Runtime.Utilities;
 using AILevelGenerator.Runtime.Validation;
+using System.IO;
 using UnityEditor;
+using UnityEngine;
 
 namespace AILevelGenerator.Editor.Core
 {
@@ -49,11 +51,20 @@ namespace AILevelGenerator.Editor.Core
             var client = new DeepSeekClient(DeepSeekApiKeySettings.GetApiKey());
 
             // 真实 LLM 生成器：替换 MockGenerator 占位（Key 动态读取，窗口保存新 Key 后无需重载域）
+            // 第五周-Day5：注入两级生成缓存（内存 FIFO-64 + 磁盘 Library/AILevelGenerator/GenerationCache 512，
+            // 磁盘层跨编辑器重启/域重载持久命中）+ 资产模板依赖哈希提供器（AssetDatabase.GetAssetDependencyHash：
+            // 模板资产/脚本变更 → 缓存键变化 → 旧条目自动失效重新调 API；代码新建模板无资产 → 哈希 0 由 TemplateId 区分）。
+            var generationCache = new TwoLevelGenerationCache(
+                new GenerationCache(GenerationCache.DefaultCapacity),
+                new DiskGenerationCache(() => Path.Combine(Application.dataPath, "..", "Library", "AILevelGenerator", "GenerationCache")));
             var generator = new LLMGenerator(
                 client,
                 () => DeepSeekApiKeySettings.GetApiKey(), // keyProvider：每次生成实时读 EditorPrefs
                 ServiceLocator.Get<ITemplateManager>(),
-                ServiceLocator.Get<IResourceMapper>());
+                ServiceLocator.Get<IResourceMapper>(),
+                generationCache,
+                true,
+                new AssetTemplateDependencyHashProvider());
 
             ServiceLocator.Register<IDeepSeekClient>(client);
             ServiceLocator.Register<IGenerator>(generator);
@@ -84,6 +95,8 @@ namespace AILevelGenerator.Editor.Core
             // Post 后置校验：实体空引用/组件完整性/逻辑可达性（可达性开启 = 真实场景验收项），失败自动全量回滚。
             var validatorRegistry = new ValidatorRegistry();
             validatorRegistry.SetServices(ServiceLocator.Get<IResourceMapper>(), ServiceLocator.Get<ITemplateManager>());
+            // 第五周-Day6：注册表亦注册进 ServiceLocator —— 联调工具与调度器复用同一实例（数据级校验口径同源，零复制）
+            ServiceLocator.Register(validatorRegistry);
             validatorRegistry.Register(ValidationStage.Pre, new RequestValidator());
             validatorRegistry.Register(ValidationStage.Pre, new ResourceValidator());
             validatorRegistry.Register(ValidationStage.Pre, new DataBoundsValidator());

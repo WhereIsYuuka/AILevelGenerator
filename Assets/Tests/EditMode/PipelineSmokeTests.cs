@@ -8,7 +8,7 @@ using NUnit.Framework;
 namespace AILevelGenerator.Tests.EditMode
 {
     /// <summary>
-    /// 全链路冒烟测试（Week3-Day6）：调度器 + 模拟生成器 + 假构建器 连续 10 轮完整链路，
+    /// 全链路冒烟测试（第三周-Day6）：调度器 + 模拟生成器 + 假构建器 连续 10 轮完整链路，
     /// 验证无状态泄漏/无卡死（每轮结束后状态复位可再发起）；覆盖 0 实体与构建失败边界。
     /// 假构建器（Task.FromResult 即时完成）保证确定性，编辑侧真实构建链路由 PipelineIntegrationRunner 验收。
     /// </summary>

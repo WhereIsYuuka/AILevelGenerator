@@ -12,7 +12,7 @@ using TerrainData = AILevelGenerator.Runtime.Data.TerrainData;
 namespace AILevelGenerator.Runtime.Scheduling
 {
     /// <summary>
-    /// 模拟生成器（Day5 占位实现，Day6 接入真实 LLM 时替换）。
+    /// 模拟生成器（第四周-Day5 占位实现，真实 LLM 接入后保留为演示/压力测试通道；文中裸 DayN 均指第四周）。
     /// 演示通道（便于手动验收状态机各路径）：
     ///   - 提示词含"失败" → 返回 Success=false + DEMO_FAIL 校验错误（演示业务失败路径）
     ///   - 提示词含"异常" → 抛出异常（演示 catch → Failed 路径）

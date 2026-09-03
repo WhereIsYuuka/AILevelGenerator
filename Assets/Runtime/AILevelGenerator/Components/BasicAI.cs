@@ -5,7 +5,7 @@ using UnityEngine.AI;
 namespace AILevelGenerator.Runtime.Components
 {
     /// <summary>
-    /// 演示组件（Week3-Day4/5）：基础巡逻 AI。运行时绕出生点做水平圆周巡逻。
+    /// 演示组件（第三周-Day4/5）：基础巡逻 AI。运行时绕出生点做水平圆周巡逻。
     /// Day5 环境适配升级：参数 useNavMesh=true 时自动挂载 NavMeshAgent，沿圆周目标点 SetDestination
     /// 寻路（可被 NavMeshAgent 识别、走 NavMesh 而非穿模）；未启用或未烘焙 NavMesh（isOnNavMesh=false）
     /// 时回落纯数学圆周巡逻（Editor 环境即可演示）。配置参数键：

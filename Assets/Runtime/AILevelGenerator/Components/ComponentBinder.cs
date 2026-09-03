@@ -7,7 +7,7 @@ using ILogger = AILevelGenerator.Runtime.Interfaces.ILogger;
 namespace AILevelGenerator.Runtime.Components
 {
     /// <summary>
-    /// 组件绑定器（Week3-Day4）：实体实例化后按逻辑名查配置表，自动挂载逻辑组件并装配参数。
+    /// 组件绑定器（第三周-Day4）：实体实例化后按逻辑名查配置表，自动挂载逻辑组件并装配参数。
     /// 设计要点（需求："轻量反射做类型映射 + 显式 AddComponent"）：
     /// 1. **反射只做类型映射**：类型名 → Type 解析（Type.GetType + 程序集扫描兜底 + 短名唯一匹配），
     ///    解析结果静态缓存——绑定 N 个实体最多解析一次类型，运行时零反射开销。

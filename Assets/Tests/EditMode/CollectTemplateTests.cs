@@ -481,11 +481,11 @@ namespace AILevelGenerator.Tests.EditMode
             promptTemplate.SystemPromptTemplate = "你是资深关卡设计师，输出 JSON。";
             promptTemplate.UserPromptTemplate = "需求：{userPrompt}";
 
-            var provider = new TemplateProvider(
+            var manager = new TemplateManager(
                 new[] { levelTemplate }, taskTemplates, new[] { promptTemplate });
 
             return new LLMGenerator(
-                _client, () => "test-key", provider, new FakeResourceMapper());
+                _client, () => "test-key", manager, new FakeResourceMapper());
         }
 
         private static DeepSeekChatResponse ToolCallResponse(string arguments) => new()

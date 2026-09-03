@@ -31,6 +31,7 @@ namespace AILevelGenerator.Editor.UI
         [SerializeField] private VisualTreeAsset _uxmlAsset; // Inspector 拖拽兜底（窗口布局持久化时生效）
 
         private DropdownField _templateDropdown;
+        private Button _refreshTemplatesBtn; // 第五周-Day4：重新扫描模板资产并热更新（不重载编辑器）
         private IntegerField _seedField;
         private TextField _inputField;
         private Button _generateBtn;
@@ -63,6 +64,7 @@ namespace AILevelGenerator.Editor.UI
 
         // 调度链路（经 ServiceLocator 获取，窗口不 new 任何具体业务类）
         private IGeneratorScheduler _scheduler;
+        private ITemplateManager _templateManager; // 第五周-Day4：模板管理器（下拉数据源 + 变更订阅，OnDestroy 注销）
         private ILevelBuilder _levelBuilder; // Day3：订阅 ProgressChanged 驱动进度条实时刷新
         private GenerationTaskState _previousState = GenerationTaskState.Ready; // Day6：自动运行判别用（生成中→成功才触发）
         // 注：状态/进度订阅不设防重标志——CreateGUI 会多次调用，但 C# 事件对同一方法组委托
@@ -112,6 +114,7 @@ namespace AILevelGenerator.Editor.UI
         private void BindControls()
         {
             _templateDropdown = rootVisualElement.Q<DropdownField>("template-dropdown");
+            _refreshTemplatesBtn = rootVisualElement.Q<Button>("template-refresh-button");
             _seedField = rootVisualElement.Q<IntegerField>("seed-field");
             _inputField = rootVisualElement.Q<TextField>("input-field");
             _generateBtn = rootVisualElement.Q<Button>("generate-button");
@@ -143,23 +146,26 @@ namespace AILevelGenerator.Editor.UI
         }
 
         /// <summary>
-        /// 初始化模板下拉：从 ITemplateProvider 动态加载关卡模板资产（策划新增资产即出现在下拉，无需改代码）。
-        /// 下拉显示 DisplayName，实际选中的 TemplateId 由 OnGenerateClicked 按 index 从缓存映射。
+        /// 初始化模板下拉（第五周-Day4）：从 ITemplateManager 动态加载关卡模板（策划新增资产经「刷新」按钮
+        /// 热更新，无需重载编辑器）。下拉显示 DisplayName，实际选中的 TemplateId 由 OnGenerateClicked
+        /// 按 index 从缓存映射。订阅 TemplatesChanged：Reload/注册注销后自动重建（同方法组订阅自动去重，
+        /// 多次 CreateGUI 不会重复挂接），OnDestroy 按实例注销防泄漏。
         /// </summary>
         private void InitTemplateOptions()
         {
             _templateOptions.Clear();
             _templateDropdown.choices.Clear();
 
-            var provider = ServiceLocator.Get<ITemplateProvider>();
-            if (provider == null)
+            _templateManager = ServiceLocator.Get<ITemplateManager>();
+            if (_templateManager == null)
             {
-                LogError("模板提供者未注册（ServiceLocator），请检查 GeneratorServiceInitializer");
+                LogError("模板管理器未注册（ServiceLocator），请检查 GeneratorServiceInitializer");
                 _generateBtn?.SetEnabled(false);
                 return;
             }
+            _templateManager.TemplatesChanged += OnTemplatesChanged;
 
-            foreach (var template in provider.GetLevelTemplates())
+            foreach (var template in _templateManager.GetLevelTemplates())
             {
                 if (template == null) continue;
                 _templateOptions.Add(template);
@@ -175,9 +181,61 @@ namespace AILevelGenerator.Editor.UI
             _templateDropdown.index = 0; // 设置 choices 后必须显式赋值才有初值
         }
 
+        /// <summary>
+        /// 模板集合变更回调（第五周-Day4）：Reload/注册注销后重建下拉并尽力保留当前选中
+        /// （同 TemplateId 仍在 → 恢复原位置；已被删除 → 回退首项）。
+        /// 同步重建（与 RenderLogs 同经验）：编辑器繁忙/MCP 轮询时 delayCall 不保证触发，重建成本可忽略；
+        /// 事件由模板集合 mutation 同步触发，不在控件自身事件循环内，直接重建安全。
+        /// </summary>
+        private void OnTemplatesChanged()
+        {
+            if (this == null || _templateDropdown == null) return; // 窗口销毁后回调保护
+
+            var previousIndex = _templateDropdown.index;
+            var previousId = previousIndex >= 0 && previousIndex < _templateOptions.Count
+                ? _templateOptions[previousIndex].TemplateId
+                : null;
+
+            InitTemplateOptions(); // 重建选项（内部订阅对同一方法组去重，无重复挂接）
+
+            var restoreIndex = -1;
+            for (var i = 0; i < _templateOptions.Count; i++)
+            {
+                if (_templateOptions[i].TemplateId == previousId)
+                {
+                    restoreIndex = i;
+                    break;
+                }
+            }
+            if (restoreIndex >= 0) _templateDropdown.index = restoreIndex;
+        }
+
+        /// <summary>
+        /// 模板刷新按钮（第五周-Day4）：重新扫描模板资产目录并热更新。
+        /// 经管理器 Reload() 整体重载：TemplatesChanged 事件链自动完成 ①本窗口下拉重建（保留选中）、
+        /// ②GeneratorServiceInitializer 订阅的模板专属校验器重扫（删除/新增模板即时生效，核心零改动）。
+        /// 未注入资产加载源时（纯运行期注册场景）回退为仅同步当前注册列表。
+        /// </summary>
+        private void OnRefreshTemplatesClicked()
+        {
+            var manager = ServiceLocator.Get<ITemplateManager>();
+            if (manager == null)
+            {
+                LogError("模板管理器未注册（ServiceLocator），刷新不可用");
+                return;
+            }
+            Log("正在重新扫描模板资产：Assets/Settings/Templates 与 Assets/Settings/PromptTemplates ...");
+            if (!manager.Reload())
+            {
+                LogWarning("模板管理器未注入资产加载源（仅支持运行期注册），已同步当前注册列表");
+                OnTemplatesChanged();
+            }
+        }
+
         private void RegisterEvents()
         {
             _generateBtn.clicked += OnGenerateClicked;
+            if (_refreshTemplatesBtn != null) _refreshTemplatesBtn.clicked += OnRefreshTemplatesClicked;
             if (_cancelBtn != null) _cancelBtn.clicked += OnCancelClicked;
             _clearLogBtn.clicked += OnClearLogClicked;
             if (_saveKeyBtn != null) _saveKeyBtn.clicked += OnSaveApiKeyClicked;
@@ -684,7 +742,7 @@ namespace AILevelGenerator.Editor.UI
 
         private void OnDestroy()
         {
-            // 清理状态/进度/报告订阅，防止内存泄露（对未订阅的委托 -= 是安全空操作）
+            // 清理状态/进度/报告/模板订阅，防止内存泄露（对未订阅的委托 -= 是安全空操作）
             if (_scheduler != null)
             {
                 _scheduler.StateChanged -= OnSchedulerStateChanged;
@@ -692,6 +750,8 @@ namespace AILevelGenerator.Editor.UI
             }
             if (_levelBuilder != null)
                 _levelBuilder.ProgressChanged -= OnBuildProgress;
+            if (_templateManager != null)
+                _templateManager.TemplatesChanged -= OnTemplatesChanged;
         }
     }
 }

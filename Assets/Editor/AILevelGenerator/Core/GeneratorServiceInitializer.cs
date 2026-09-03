@@ -1,9 +1,7 @@
-using System;
 using AILevelGenerator.Editor.Builders;
 using AILevelGenerator.Editor.Tools;
 using AILevelGenerator.Editor.UI;
 using AILevelGenerator.Runtime.Components;
-using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.LLM;
@@ -19,16 +17,22 @@ namespace AILevelGenerator.Editor.Core
     /// <summary>
     /// 编辑器启动时把核心服务注册进 ServiceLocator（域加载时执行，必然早于窗口 CreateGUI）。
     /// 注册：真实 LLM 生成器（LLMGenerator → DeepSeekClient，Key 经 EditorPrefs 注入）、调度器、
-    /// DeepSeek 客户端（供窗口「测试连接」复用同一实例）、模板提供者、资源映射（Prompt 资源清单数据源）。
+    /// DeepSeek 客户端（供窗口「测试连接」复用同一实例）、模板管理器、资源映射（Prompt 资源清单数据源）。
     /// MockGenerator 类保留（测试/占位用）但不再注册。
+    /// 第五周-Day4：模板体系由"一次性快照 Provider"升级为「模板管理器（注册中心 + 动态重载）」——
+    /// TemplateAssetSource 扫描资产目录，Reload() 全量替换并广播 TemplatesChanged；
+    /// 本类订阅该事件做「模板专属校验器重扫」（删除/改名模板不再残留拦截器、新增模板自动获得校验器，
+    /// 核心框架零改动）；窗口刷新按钮触发同一 Reload 链路，策划改动模板资产即时生效，无需重载域。
     /// </summary>
     [InitializeOnLoad]
     public static class GeneratorServiceInitializer
     {
         static GeneratorServiceInitializer()
         {
-            // 模板体系：扫描 Assets/Settings/ 加载全部关卡/任务/Prompt 模板资产
-            ServiceLocator.Register<ITemplateProvider>(TemplateProvider.LoadFromAssets());
+            // —— 模板体系（第五周-Day4）：管理器 + Editor 资产加载源 ——
+            // 初始为空表，下方订阅变更事件后 Reload 首次装载（事件驱动模板专属校验器重扫与摘要日志）。
+            var templateManager = new TemplateManager(new TemplateAssetSource());
+            ServiceLocator.Register<ITemplateManager>(templateManager);
 
             // 资源映射：读取默认映射配置（缺失时提示但不等同于注册失败，窗口生成链路不受影响）
             var mappingConfig = AssetDatabase.LoadAssetAtPath<PrefabMappingConfig>("Assets/Settings/Mappings/PrefabMapping_Default.asset");
@@ -48,7 +52,7 @@ namespace AILevelGenerator.Editor.Core
             var generator = new LLMGenerator(
                 client,
                 () => DeepSeekApiKeySettings.GetApiKey(), // keyProvider：每次生成实时读 EditorPrefs
-                ServiceLocator.Get<ITemplateProvider>(),
+                ServiceLocator.Get<ITemplateManager>(),
                 ServiceLocator.Get<IResourceMapper>());
 
             ServiceLocator.Register<IDeepSeekClient>(client);
@@ -75,20 +79,34 @@ namespace AILevelGenerator.Editor.Core
 
             // 校验体系（第四周-Day2/3）：注册表先行——构建器（Mid）与调度器（Pre/Post）共享同一实例，
             // 阶段过滤互不干扰（核心只做调度，校验规则全部在具体校验器内，开闭原则）。
-            // Pre 前置校验：输入合法性/资源存在性/数值边界/模板范围（模板专属：遍历模板资产逐个注册，跳过空 TemplateId）；
+            // Pre 前置校验：输入合法性/资源存在性/数值边界/模板范围（模板专属：重扫注册见下）；
             // Mid 生成中校验：与 Pre 同校验器（DataBounds/Resource），每帧批次兜底数据在 Pre 后被污染/默认值应用的差异面；
             // Post 后置校验：实体空引用/组件完整性/逻辑可达性（可达性开启 = 真实场景验收项），失败自动全量回滚。
             var validatorRegistry = new ValidatorRegistry();
-            validatorRegistry.SetServices(ServiceLocator.Get<IResourceMapper>(), ServiceLocator.Get<ITemplateProvider>());
+            validatorRegistry.SetServices(ServiceLocator.Get<IResourceMapper>(), ServiceLocator.Get<ITemplateManager>());
             validatorRegistry.Register(ValidationStage.Pre, new RequestValidator());
             validatorRegistry.Register(ValidationStage.Pre, new ResourceValidator());
             validatorRegistry.Register(ValidationStage.Pre, new DataBoundsValidator());
-            foreach (var t in ServiceLocator.Get<ITemplateProvider>()?.GetLevelTemplates() ?? Array.Empty<LevelTemplate>())
-                if (t is ConfigurableLevelTemplate config && !string.IsNullOrEmpty(config.TemplateId))
-                    validatorRegistry.RegisterForTemplate(config.TemplateId, new TemplateScopeValidator(config));
             validatorRegistry.Register(ValidationStage.Mid, new DataBoundsValidator());
             validatorRegistry.Register(ValidationStage.Mid, new ResourceValidator());
             validatorRegistry.Register(ValidationStage.Post, new PostBuildValidator(bindingConfig));
+
+            // 模板专属范围校验的"重扫注册"唯一入口：Reload（首次装载/窗口刷新）后自动同步。
+            // 模板类型无关（TemplateScopeValidator 只依赖基类多态 CollectScopeViolations）：
+            // 新增模板类型 = 新增资产或子类，本文件零改动（第五周-Day4 验收项）。
+            templateManager.TemplatesChanged += () =>
+            {
+                validatorRegistry.UnregisterTemplateScopedValidators();
+                var levelTemplates = templateManager.GetLevelTemplates();
+                if (levelTemplates == null) return;
+                foreach (var template in levelTemplates)
+                {
+                    if (template == null || string.IsNullOrEmpty(template.TemplateId)) continue;
+                    validatorRegistry.RegisterForTemplate(template.TemplateId, new TemplateScopeValidator(template));
+                }
+                UnityEngine.Debug.Log($"[AI Generator] 模板集合已变更，已同步模板专属校验器：关卡 {templateManager.GetLevelTemplates().Count} / " +
+                    $"任务 {templateManager.GetTaskTemplates().Count} / Prompt {templateManager.GetPromptTemplates().Count}");
+            };
 
             // 场景构建器：生成成功后分帧把 LevelData 实例化到场景（依赖资源映射；映射缺失时构建跳过全部 Props）。
             // 注入回滚管理器：取消/失败时经其分帧删除本次生成根，不阻塞编辑器；
@@ -111,6 +129,9 @@ namespace AILevelGenerator.Editor.Core
                 var path = GenerationReportWriter.Write(report);
                 UnityEngine.Debug.Log($"[AI Generator] 生成报告已归档：{path ?? "（落盘失败，详见警告日志）"}");
             };
+
+            // 首次装载（事件链路自动完成模板专属校验器注册，无需单独初始化代码）
+            templateManager.Reload();
         }
     }
 }

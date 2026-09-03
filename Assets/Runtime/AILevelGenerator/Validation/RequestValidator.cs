@@ -27,10 +27,10 @@ namespace AILevelGenerator.Runtime.Validation
             else if (data.Prompt.Length > MaxPromptLength)
                 AddError(result, ErrorCodes.REQUEST_PROMPT_TOO_LONG, $"生成描述过长（{data.Prompt.Length} 字符），超过上限 {MaxPromptLength} 字符", "prompt");
 
-            // 模板存在性：仅当指定了 TemplateId 且模板提供者已注入时校验（未注入降级跳过，不误报）
-            if (!string.IsNullOrEmpty(data.TemplateId) && context?.TemplateProvider != null)
+            // 模板存在性：仅当指定了 TemplateId 且模板管理器已注入时校验（未注入降级跳过，不误报）
+            if (!string.IsNullOrEmpty(data.TemplateId) && context?.TemplateManager != null)
             {
-                if (context.TemplateProvider.GetTemplateById(data.TemplateId) == null)
+                if (context.TemplateManager.GetTemplateById(data.TemplateId) == null)
                     AddError(result, ErrorCodes.REQUEST_TEMPLATE_NOT_FOUND, $"模板不存在：{data.TemplateId}，请检查模板配置", "templateId");
             }
 

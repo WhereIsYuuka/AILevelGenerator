@@ -1,4 +1,5 @@
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Interfaces.Templates;
 
 namespace AILevelGenerator.Runtime.Interfaces
 {
@@ -16,7 +17,7 @@ namespace AILevelGenerator.Runtime.Interfaces
         public string ScenePath {get; set;}
         /// <summary> 当前请求的模板标识（模板专属校验器按此匹配） </summary>
         public string TemplateId {get; set;}
-        /// <summary> 模板提供者（模板存在性校验用；未注入时校验器应降级跳过） </summary>
-        public ITemplateProvider TemplateProvider {get; set;}
+        /// <summary> 模板管理器（第五周-Day4 替代提供者；模板存在性校验用，未注入时校验器应降级跳过） </summary>
+        public ITemplateManager TemplateManager {get; set;}
     }
 }

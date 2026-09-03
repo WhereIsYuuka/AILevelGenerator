@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using AILevelGenerator.Runtime.Data;
 using AILevelGenerator.Runtime.Interfaces;
@@ -16,31 +15,35 @@ namespace AILevelGenerator.Tests.EditMode
     /// </summary>
     public class RequestValidatorTests
     {
-        /// <summary> 假模板提供者：按注册表返回模板（其余方法空实现） </summary>
-        private class FakeTemplateProvider : ITemplateProvider
-        {
-            private readonly Dictionary<string, LevelTemplate> _templates = new();
+        /// <summary> 已创建待销毁的测试模板资产（防内存泄漏） </summary>
+        private readonly List<ScriptableObject> _created = new();
 
-            public FakeTemplateProvider WithTemplate(string id)
+        /// <summary> 内存模板管理器测试替身：用真实 TemplateManager 按 TemplateId 注册内存关卡模板 </summary>
+        private TemplateManager CreateManager(params string[] templateIds)
+        {
+            var levels = new List<LevelTemplate>();
+            foreach (var id in templateIds)
             {
                 var t = ScriptableObject.CreateInstance<ConfigurableLevelTemplate>();
                 t.TemplateId = id;
-                _templates[id] = t;
-                return this;
+                levels.Add(t);
+                _created.Add(t);
             }
-
-            public IReadOnlyList<LevelTemplate> GetLevelTemplates() => new List<LevelTemplate>(_templates.Values);
-            public LevelTemplate GetTemplateById(string id) => _templates.TryGetValue(id, out var t) ? t : null;
-            public IReadOnlyList<TaskTemplate> GetTaskTemplates() => Array.Empty<TaskTemplate>();
-            public TaskTemplate GetTaskTemplateById(string id) => null;
-            public PromptTemplate GetDefaultPromptTemplate() => null;
-            public PromptTemplate GetPromptTemplateById(string id) => null;
+            return new TemplateManager(levels, new List<TaskTemplate>(), new List<PromptTemplate>());
         }
 
-        private static ValidationResult Validate(GenerationRequest request, ITemplateProvider provider = null)
+        private static ValidationResult Validate(GenerationRequest request, ITemplateManager manager = null)
         {
             var validator = new RequestValidator();
-            return validator.Validate(request, new ValidationContext { TemplateProvider = provider });
+            return validator.Validate(request, new ValidationContext { TemplateManager = manager });
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            foreach (var so in _created)
+                if (so != null) Object.DestroyImmediate(so);
+            _created.Clear();
         }
 
         private static GenerationRequest CreateRequest() => new GenerationRequest
@@ -83,7 +86,7 @@ namespace AILevelGenerator.Tests.EditMode
             var request = CreateRequest();
             request.TemplateId = "不存在的模板";
 
-            var result = Validate(request, new FakeTemplateProvider().WithTemplate("战斗关卡"));
+            var result = Validate(request, CreateManager("战斗关卡"));
 
             Assert.IsFalse(result.IsValid);
             Assert.AreEqual("REQUEST_TEMPLATE_NOT_FOUND", result.Errors[0].Code);
@@ -93,7 +96,7 @@ namespace AILevelGenerator.Tests.EditMode
         [Test]
         public void 指定模板且存在_模板检查通过()
         {
-            var result = Validate(CreateRequest(), new FakeTemplateProvider().WithTemplate("战斗关卡"));
+            var result = Validate(CreateRequest(), CreateManager("战斗关卡"));
 
             Assert.IsTrue(result.IsValid, "模板存在时不应报错");
         }
@@ -104,19 +107,19 @@ namespace AILevelGenerator.Tests.EditMode
             var request = CreateRequest();
             request.TemplateId = "";
 
-            // Provider 即使为空也不应触发模板查询（TemplateId 空即跳过）
-            var result = Validate(request, new FakeTemplateProvider());
+            // 管理器即使已注入也不应触发模板查询（TemplateId 空即跳过）
+            var result = Validate(request, CreateManager());
 
             Assert.IsTrue(result.IsValid, "未指定模板不应校验模板存在性");
         }
 
         [Test]
-        public void 模板提供者未注入_跳过模板存在性检查()
+        public void 模板管理器未注入_跳过模板存在性检查()
         {
             var request = CreateRequest();
             request.TemplateId = "任何模板";
 
-            var result = Validate(request); // provider = null
+            var result = Validate(request); // manager = null
 
             Assert.IsTrue(result.IsValid, "服务未注入时应降级跳过，不误报");
         }

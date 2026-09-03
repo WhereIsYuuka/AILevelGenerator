@@ -90,7 +90,7 @@ namespace AILevelGenerator.Tests.EditMode
             promptTemplate.SystemPromptTemplate = "你是资深关卡设计师，输出 JSON。{templateGuideline}";
             promptTemplate.UserPromptTemplate = "需求：{userPrompt} 可用物体：{resourceList} {seed}";
 
-            var provider = new TemplateProvider(
+            var manager = new TemplateManager(
                 new[] { levelTemplate },
                 Array.Empty<TaskTemplate>(),
                 new[] { promptTemplate });
@@ -98,7 +98,7 @@ namespace AILevelGenerator.Tests.EditMode
             return new LLMGenerator(
                 _client,
                 keyProvider ?? (() => "test-key"),
-                provider,
+                manager,
                 new FakeResourceMapper("敌人-弓箭手", "宝箱", "NPC"),
                 cache,
                 useJsonMode);
@@ -284,12 +284,12 @@ namespace AILevelGenerator.Tests.EditMode
             levelTemplate.MaxPropCount = propMax;
             levelTemplate.ForceMainTask = forceMainTask;
 
-            var provider = new TemplateProvider(
+            var manager = new TemplateManager(
                 new[] { levelTemplate },
                 Array.Empty<TaskTemplate>(),
                 new[] { NewTemplate<PromptTemplate>() });
 
-            return new LLMGenerator(_client, () => "test-key", provider, new FakeResourceMapper("宝箱"));
+            return new LLMGenerator(_client, () => "test-key", manager, new FakeResourceMapper("宝箱"));
         }
 
         // —— JSON 模式开关 ——
@@ -348,12 +348,12 @@ namespace AILevelGenerator.Tests.EditMode
             levelTemplate.EnemyMinSpacing = 6f;
             levelTemplate.BoundsMargin = 3f;
 
-            var provider = new TemplateProvider(
+            var manager = new TemplateManager(
                 new[] { levelTemplate },
                 Array.Empty<TaskTemplate>(),
                 new[] { NewTemplate<PromptTemplate>() });
 
-            return new LLMGenerator(_client, () => "test-key", provider, new FakeResourceMapper("敌人-弓箭手", "敌人-近战", "敌人-精英", "宝箱", "NPC"));
+            return new LLMGenerator(_client, () => "test-key", manager, new FakeResourceMapper("敌人-弓箭手", "敌人-近战", "敌人-精英", "宝箱", "NPC"));
         }
 
         [Test]

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using AILevelGenerator.Runtime.Data;
 using AILevelGenerator.Runtime.Utilities;
@@ -38,6 +39,15 @@ namespace AILevelGenerator.Runtime.Interfaces.Templates
 
         /// <summary> 应用默认值到 LevelData </summary>
         public abstract void ApplyDefaults(LevelData data);
+
+        /// <summary>
+        /// 模板规模自检（第五周-Day4，开闭原则落点）：模板把"生成结果不符合自身约束"逐条写入 violations，
+        /// 由核心框架统一转译消费 —— LLM 生成器转 Warning（生成期提示）、范围校验器转 Error（拦截）。
+        /// 模板只描述规则，不感知消费方的严重级别与调度路径；新增模板类型只需覆写本方法，
+        /// 核心层（LLMGenerator/ValidatorRegistry/TemplateScopeValidator）零改动即获得校验能力。
+        /// 实现约定：data/violations 为 null 时静默返回；规则顺序即消费方输出顺序（先违规项优先展示）。
+        /// </summary>
+        public virtual void CollectScopeViolations(LevelData data, IList<ScopeViolation> violations) { }
 
         /// <summary>
         /// 模板指南文本：描述本模板的布局/内容规则，随 Prompt 注入 {templateGuideline} 告知 LLM。

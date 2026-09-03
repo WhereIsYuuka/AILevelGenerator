@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using AILevelGenerator.Runtime.Data;
+using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.Utilities;
 using UnityEngine;
@@ -240,6 +241,57 @@ namespace AILevelGenerator.Runtime.Templates
             position.x = Mathf.Clamp(position.x, -halfX, halfX);
             position.z = Mathf.Clamp(position.z, -halfZ, halfZ);
             return position;
+        }
+
+        // —— Day4 规模自检：模板拥有规则，核心框架统一转译 ——
+        // 规则顺序即消费方输出顺序（props → tasks → 主线 → 地形），语义与消息逐字对齐既有
+        // LLMGenerator.ValidateScope（Warning 级）/TemplateScopeValidator（Error 级）双级输出；
+        // 地形规则仅 OverrideTerrain 且结果已有地形时判定：正常链路 ApplyDefaults 已先行覆盖，
+        // 此处作为防御性兜底（OverrideTerrain=false 时不产生噪声违规，warning 面保持与历史一致）。
+
+        /// <summary> 覆写基类：把数据驱动约束逐条写入 violations（规模 0 = 不限制） </summary>
+        public override void CollectScopeViolations(LevelData data, IList<ScopeViolation> violations)
+        {
+            if (data == null || violations == null) return;
+
+            var propCount = data.Props?.Count ?? 0;
+            if (MaxPropCount > 0 && propCount > MaxPropCount)
+                violations.Add(Scope(ErrorCodes.PROPS_TOO_MANY, $"道具数量 {propCount} 超过模板上限 {MaxPropCount}", "props"));
+            if (MinPropCount > 0 && propCount < MinPropCount)
+                violations.Add(Scope(ErrorCodes.PROPS_TOO_FEW, $"道具数量 {propCount} 低于模板下限 {MinPropCount}", "props"));
+
+            var taskCount = data.Tasks?.Count ?? 0;
+            if (MaxTaskCount > 0 && taskCount > MaxTaskCount)
+                violations.Add(Scope(ErrorCodes.TASKS_TOO_MANY, $"任务数量 {taskCount} 超过模板上限 {MaxTaskCount}", "tasks"));
+            if (MinTaskCount > 0 && taskCount < MinTaskCount)
+                violations.Add(Scope(ErrorCodes.TASKS_TOO_FEW, $"任务数量 {taskCount} 低于模板下限 {MinTaskCount}", "tasks"));
+
+            // 主线任务强制（与 LLM 侧同文案）
+            if (ForceMainTask && !HasMainTask(data.Tasks))
+                violations.Add(Scope(ErrorCodes.NO_MAIN_TASK, "模板要求存在主线任务，但生成结果没有 IsMainTask=true 的任务", "tasks"));
+
+            // 地形与模板一致（OverrideTerrain=true 时正常链路 ApplyDefaults 已覆盖，此处为防御性兜底）
+            if (OverrideTerrain && data.Terrain != null)
+            {
+                if (data.Terrain.Width != TerrainWidth)
+                    violations.Add(Scope(ErrorCodes.TERRAIN_MISMATCH, $"地形宽度与模板不一致：{data.Terrain.Width} ≠ {TerrainWidth}", "terrain.width"));
+                if (data.Terrain.Length != TerrainLength)
+                    violations.Add(Scope(ErrorCodes.TERRAIN_MISMATCH, $"地形长度与模板不一致：{data.Terrain.Length} ≠ {TerrainLength}", "terrain.length"));
+                if (!Mathf.Approximately(data.Terrain.HeightScale, TerrainHeightScale))
+                    violations.Add(Scope(ErrorCodes.TERRAIN_MISMATCH, $"地形高度缩放与模板不一致：{data.Terrain.HeightScale} ≠ {TerrainHeightScale}", "terrain.heightScale"));
+            }
+        }
+
+        /// <summary> 组装一条规模违规（Code 复用 ErrorCodes 常量，与既有校验体系同码） </summary>
+        private static ScopeViolation Scope(string code, string message, string dataPath)
+            => new() { Code = code, Message = message, DataPath = dataPath };
+
+        private static bool HasMainTask(List<TaskData> tasks)
+        {
+            if (tasks == null) return false;
+            foreach (var t in tasks)
+                if (t != null && t.IsMainTask) return true;
+            return false;
         }
 
         /// <summary> 自校验：继承基类 TemplateId 检查 + 数量范围合法性（0 表示不限，Max 非 0 时不得小于 Min） </summary>

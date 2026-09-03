@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using AILevelGenerator.Runtime.Data;
 using AILevelGenerator.Runtime.Diagnostics;
 using AILevelGenerator.Runtime.Interfaces;
+using AILevelGenerator.Runtime.Interfaces.Templates;
 
 namespace AILevelGenerator.Runtime.Validation
 {
@@ -19,17 +20,17 @@ namespace AILevelGenerator.Runtime.Validation
     {
         private readonly List<Registration> _validators = new();
         private IResourceMapper _resourceMapper;
-        private ITemplateProvider _templateProvider;
+        private ITemplateManager _templateManager;
         private ILogger _logger;
 
         /// <summary>
-        /// 注入校验依赖的服务（可选）：资源映射（资源存在性校验）、模板提供者（模板存在性校验）。
+        /// 注入校验依赖的服务（可选）：资源映射（资源存在性校验）、模板管理器（模板存在性校验）。
         /// 未注入时校验器依据自身数据源降级（跳过对应检查，不报错）。
         /// </summary>
-        public void SetServices(IResourceMapper resourceMapper = null, ITemplateProvider templateProvider = null)
+        public void SetServices(IResourceMapper resourceMapper = null, ITemplateManager templateManager = null)
         {
             _resourceMapper = resourceMapper;
-            _templateProvider = templateProvider;
+            _templateManager = templateManager;
         }
 
         /// <summary> 注册通用校验器：在指定阶段、数据类型匹配时运行（模板 ID 为空 = 全部请求生效） </summary>
@@ -56,7 +57,7 @@ namespace AILevelGenerator.Runtime.Validation
             var context = new ValidationContext
             {
                 ResourceMapper = _resourceMapper,
-                TemplateProvider = _templateProvider,
+                TemplateManager = _templateManager,
                 TemplateId = templateId
             };
             var result = new ValidationResult();
@@ -90,6 +91,12 @@ namespace AILevelGenerator.Runtime.Validation
             foreach (var reg in _validators)
                 reg.Adapter.SetLogger(logger);
         }
+
+        /// <summary>
+        /// 注销全部模板专属校验器（TemplateId 非空者）：模板集合整体重载后由刷新链路先清后重扫注册，
+        /// 保证被删除/改名的模板不再残留拦截器（新增模板自动获得校验器，核心框架零改动）。
+        /// </summary>
+        public void UnregisterTemplateScopedValidators() => _validators.RemoveAll(reg => reg.TemplateId != null);
 
         /// <summary> 清空注册（测试隔离用） </summary>
         public void Clear() => _validators.Clear();

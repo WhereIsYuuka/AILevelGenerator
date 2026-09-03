@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using AILevelGenerator.Runtime.Data;
 using AILevelGenerator.Runtime.Interfaces;
+using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.Utilities;
 using UnityEditor;
 using UnityEngine;
@@ -44,7 +45,7 @@ namespace AILevelGenerator.Editor.Tools
                 return;
             }
 
-            var templates = ServiceLocator.Get<ITemplateProvider>()?.GetLevelTemplates();
+            var templates = ServiceLocator.Get<ITemplateManager>()?.GetLevelTemplates();
             var templateList = templates?.Where(t => t != null).ToList();
             if (templateList == null || templateList.Count == 0)
             {

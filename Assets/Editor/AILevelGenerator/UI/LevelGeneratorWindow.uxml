@@ -6,6 +6,7 @@
             <ui:VisualElement class="form-row">
                 <ui:Label text="模板类型：" class="form-label" style="font-size: 13px;"/>
                 <ui:DropdownField name="template-dropdown" class="form-control"/>
+                <ui:Button name="template-refresh-button" text="刷新" class="secondary-button" style="font-size: 13px;" tooltip="重新扫描模板资产目录并热更新（第五周-Day4：策划新增/修改模板资产后点击，无需重载编辑器）"/>
             </ui:VisualElement>
             <ui:VisualElement class="form-row">
                 <ui:Label text="随机种子：" class="form-label" style="font-size: 13px;"/>

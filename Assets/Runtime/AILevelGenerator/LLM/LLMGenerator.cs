@@ -8,14 +8,13 @@ using AILevelGenerator.Runtime.Interfaces;
 using AILevelGenerator.Runtime.Interfaces.Templates;
 using AILevelGenerator.Runtime.Parsing;
 using AILevelGenerator.Runtime.Prompting;
-using AILevelGenerator.Runtime.Templates;
 
 namespace AILevelGenerator.Runtime.LLM
 {
     /// <summary>
     /// 真实 LLM 生成器（Day5 全链路编排）：请求 → Prompt 组装 → Function Calling 双重约束 →
     /// API 调用 → 容错解析 → 模板默认值 → 规模/主线校验 → GenerationResult。
-    /// - 依赖注入（IDeepSeekClient / ITemplateProvider / IResourceMapper / 缓存 / keyProvider），可单测不碰网络
+    /// - 依赖注入（IDeepSeekClient / ITemplateManager / IResourceMapper / 缓存 / keyProvider），可单测不碰网络
     /// - API key 经 keyProvider 注入检查（Runtime 程序集不引用 UnityEditor，EditorPrefs 由窗口侧闭包提供）
     /// - 缓存命中直接重走解析管线返回，不调 API
     /// - 异常全部转 GenerationResult.Errors（中文 FriendlyMessage），不向调度器抛
@@ -24,7 +23,7 @@ namespace AILevelGenerator.Runtime.LLM
     {
         private readonly IDeepSeekClient _client;
         private readonly Func<string> _apiKeyProvider;
-        private readonly ITemplateProvider _templateProvider;
+        private readonly ITemplateManager _templateManager;
         private readonly IResourceMapper _resourceMapper;
         private readonly GenerationCache _cache;
         private readonly PromptBuilder _promptBuilder = new();
@@ -33,14 +32,14 @@ namespace AILevelGenerator.Runtime.LLM
         public LLMGenerator(
             IDeepSeekClient client,
             Func<string> apiKeyProvider,
-            ITemplateProvider templateProvider,
+            ITemplateManager templateManager,
             IResourceMapper resourceMapper,
             GenerationCache cache = null,
             bool useJsonMode = true)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _apiKeyProvider = apiKeyProvider;
-            _templateProvider = templateProvider;
+            _templateManager = templateManager;
             _resourceMapper = resourceMapper;
             _cache = cache ?? new GenerationCache();
             _useJsonMode = useJsonMode;
@@ -121,8 +120,8 @@ namespace AILevelGenerator.Runtime.LLM
         /// <summary> 按请求 TemplateId 取关卡模板（未命中/未传返回 null，走默认 Prompt） </summary>
         private LevelTemplate ResolveLevelTemplate(GenerationRequest request)
         {
-            if (_templateProvider == null || string.IsNullOrEmpty(request?.TemplateId)) return null;
-            return _templateProvider.GetTemplateById(request.TemplateId);
+            if (_templateManager == null || string.IsNullOrEmpty(request?.TemplateId)) return null;
+            return _templateManager.GetTemplateById(request.TemplateId);
         }
 
         /// <summary>
@@ -133,7 +132,7 @@ namespace AILevelGenerator.Runtime.LLM
         /// </summary>
         private void ApplyTaskTemplates(LevelData level, int requestSeed)
         {
-            var templates = _templateProvider?.GetTaskTemplates();
+            var templates = _templateManager?.GetTaskTemplates();
             if (templates == null || level?.Tasks == null || level.Tasks.Count == 0) return;
 
             foreach (var task in level.Tasks)
@@ -157,7 +156,7 @@ namespace AILevelGenerator.Runtime.LLM
         /// <summary> Prompt 组装：默认 Prompt 模板 + 插值上下文（模板指南/资源清单/开关/种子） </summary>
         private PromptBuildResult BuildPrompt(GenerationRequest request, LevelTemplate template)
         {
-            var promptTemplate = _templateProvider?.GetDefaultPromptTemplate();
+            var promptTemplate = _templateManager?.GetDefaultPromptTemplate();
             var resourceNames = _resourceMapper?.GetAllLogicalNames();
             var context = PromptBuilder.CreateContext(request, template, resourceNames);
             return _promptBuilder.Build(promptTemplate, context);
@@ -211,35 +210,24 @@ namespace AILevelGenerator.Runtime.LLM
             return string.IsNullOrEmpty(message.Content) ? null : message.Content;
         }
 
-        /// <summary> 规模与主线校验：模板配置的数量范围越界/缺主线 → warning（0 表示不限制） </summary>
+        /// <summary>
+        /// 规模与主线自检 → Warning 转译（第五周-Day4）：模板经 CollectScopeViolations 自检规模约束，
+        /// 核心框架只做转译不做类型判断 —— 任意模板类型覆写该方法即获得提示能力，新增模板零改动核心层。
+        /// 与 TemplateScopeValidator（Error 级拦截）同码双级：生成期提示不裁剪（裁剪职责在数据级校验）。
+        /// </summary>
         private static void ValidateScope(LevelParseResult parse, LevelTemplate template, List<ValidationWarning> warnings)
         {
-            if (parse.Level == null) return;
+            if (parse.Level == null || template == null) return;
 
-            // 模板可能为任意 LevelTemplate 子类，仅当数据驱动模板配置了范围时校验（类型转换失败视为无约束）
-            if (template is ConfigurableLevelTemplate config)
-            {
-                if (config.MaxPropCount > 0 && parse.Level.Props.Count > config.MaxPropCount)
-                    AddScopeWarning(warnings, ErrorCodes.PROPS_TOO_MANY, $"道具数量 {parse.Level.Props.Count} 超过模板上限 {config.MaxPropCount}");
-                if (config.MinPropCount > 0 && parse.Level.Props.Count < config.MinPropCount)
-                    AddScopeWarning(warnings, ErrorCodes.PROPS_TOO_FEW, $"道具数量 {parse.Level.Props.Count} 低于模板下限 {config.MinPropCount}");
-                if (config.MaxTaskCount > 0 && parse.Level.Tasks.Count > config.MaxTaskCount)
-                    AddScopeWarning(warnings, ErrorCodes.TASKS_TOO_MANY, $"任务数量 {parse.Level.Tasks.Count} 超过模板上限 {config.MaxTaskCount}");
-                if (config.MinTaskCount > 0 && parse.Level.Tasks.Count < config.MinTaskCount)
-                    AddScopeWarning(warnings, ErrorCodes.TASKS_TOO_FEW, $"任务数量 {parse.Level.Tasks.Count} 低于模板下限 {config.MinTaskCount}");
-                if (config.ForceMainTask && !HasMainTask(parse.Level.Tasks))
-                    AddScopeWarning(warnings, ErrorCodes.NO_MAIN_TASK, "模板要求存在主线任务，但生成结果没有 IsMainTask=true 的任务");
-            }
+            var violations = new List<ScopeViolation>();
+            template.CollectScopeViolations(parse.Level, violations);
+            foreach (var violation in violations)
+                warnings.Add(new ValidationWarning
+                {
+                    Code = violation.Code,
+                    Message = violation.Message,
+                    DataPath = violation.DataPath
+                });
         }
-
-        private static bool HasMainTask(List<TaskData> tasks)
-        {
-            foreach (var t in tasks)
-                if (t != null && t.IsMainTask) return true;
-            return false;
-        }
-
-        private static void AddScopeWarning(List<ValidationWarning> warnings, string code, string message) =>
-            warnings.Add(new ValidationWarning { Code = code, Message = message });
     }
 }

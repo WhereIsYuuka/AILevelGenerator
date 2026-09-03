@@ -303,5 +303,98 @@ namespace AILevelGenerator.Tests.EditMode
             Assert.IsNull(_client.LastRequest.ResponseFormatJson, "useJsonMode=false 时不应带 response_format");
             Assert.IsNotNull(_client.LastRequest.ToolChoiceJson, "function calling 单约束仍在");
         }
+
+        // —— 战斗兜底全链路（Day2）：LLM 产出不足 → 模板 FinalizeData 确定性补齐 ——
+
+        private const string BattleJson = @"{
+            ""level_name"": ""战斗试炼场"",
+            ""terrain"": {""width"": 120, ""length"": 120},
+            ""props"": [
+                {""prefab_logical_name"": ""敌人-近战"", ""position"": {""x"": 8, ""z"": 8}},
+                {""prefab_logical_name"": ""宝箱"", ""position"": {""x"": -5, ""z"": -5}}
+            ],
+            ""tasks"": [ {""task_name"": ""清除敌人"", ""type"": ""kill"", ""is_main_task"": true} ]
+        }";
+
+        /// <summary> 同上，但 LLM 给敌人-近战 自带 2 个巡逻点（测试模板不覆盖 LLM 内容） </summary>
+        private const string BattleJsonWithPatrol = @"{
+            ""level_name"": ""战斗试炼场"",
+            ""terrain"": {""width"": 120, ""length"": 120},
+            ""props"": [
+                {""prefab_logical_name"": ""敌人-近战"", ""position"": {""x"": 8, ""z"": 8},
+                 ""patrol_points"": [{""x"": 9, ""z"": 9}, {""x"": 7, ""z"": 7}]},
+                {""prefab_logical_name"": ""宝箱"", ""position"": {""x"": -5, ""z"": -5}}
+            ],
+            ""tasks"": [ {""task_name"": ""清除敌人"", ""type"": ""kill"", ""is_main_task"": true} ]
+        }";
+
+        /// <summary> 带战斗兜底配置的生成器：3 种敌人、数量下限 5、每敌 2 巡逻点（环形 8~25，半径 3~8） </summary>
+        private LLMGenerator CreateBattleGenerator()
+        {
+            var levelTemplate = NewTemplate<ConfigurableLevelTemplate>();
+            levelTemplate.TemplateId = "tpl1";
+            levelTemplate.EnemyOptions = new List<EnemyTypeOption>
+            {
+                new() { LogicalName = "敌人-近战", Weight = 1f },
+                new() { LogicalName = "敌人-弓箭手", Weight = 1f },
+                new() { LogicalName = "敌人-精英", Weight = 1f }
+            };
+            levelTemplate.MinEnemyCount = 5;
+            levelTemplate.PatrolPointsPerEnemy = 2;
+            levelTemplate.PatrolRadiusMin = 3f;
+            levelTemplate.PatrolRadiusMax = 8f;
+            levelTemplate.EnemySpawnRingMin = 8f;
+            levelTemplate.EnemySpawnRingMax = 25f;
+            levelTemplate.EnemyMinSpacing = 6f;
+            levelTemplate.BoundsMargin = 3f;
+
+            var provider = new TemplateProvider(
+                new[] { levelTemplate },
+                Array.Empty<TaskTemplate>(),
+                new[] { NewTemplate<PromptTemplate>() });
+
+            return new LLMGenerator(_client, () => "test-key", provider, new FakeResourceMapper("敌人-弓箭手", "敌人-近战", "敌人-精英", "宝箱", "NPC"));
+        }
+
+        [Test]
+        public async Task 战斗链路_LLM只给一个敌人_模板补齐到数量下限并填巡逻点()
+        {
+            var generator = CreateBattleGenerator();
+            _client.Responder = _ => ToolCallResponse(BattleJson);
+
+            var result = await generator.GenerateAsync(SimpleRequest("设计一场战斗"));
+
+            Assert.IsTrue(result.Success, "战斗兜底不应阻断生成链路");
+            var props = result.LevelData.Props;
+            var enemyCount = 0;
+            foreach (var p in props)
+            {
+                if (p.PrefabLogicalName == "敌人-近战" || p.PrefabLogicalName == "敌人-弓箭手" || p.PrefabLogicalName == "敌人-精英")
+                {
+                    enemyCount++;
+                    Assert.AreEqual(2, p.PatrolPoints.Count, "FinalizeData 应为每个敌人补齐默认巡逻点");
+                    var dist = new Vector2(p.Position.x, p.Position.z).magnitude;
+                    Assert.GreaterOrEqual(dist, 8f - 0.05f, "兜底落点不得低于环形内径");
+                    Assert.LessOrEqual(dist, 25f + 0.05f, "兜底落点不得超出环形外径");
+                }
+            }
+            Assert.AreEqual(5, enemyCount, "LLM 只给 1 个敌人时模板应确定性补齐到 MinEnemyCount=5");
+        }
+
+        [Test]
+        public async Task 战斗链路_LLM自带巡逻点_原样保留不被模板覆盖()
+        {
+            var generator = CreateBattleGenerator();
+            _client.Responder = _ => ToolCallResponse(BattleJsonWithPatrol);
+
+            var result = await generator.GenerateAsync(SimpleRequest("设计一场战斗"));
+
+            Assert.IsTrue(result.Success);
+            // LLM 敌人带 2 点 → 模板不覆盖（原始 prop 排头，模板补位的一律追加尾部）
+            CollectionAssert.AreEqual(
+                new[] { new Vector3(9f, 0f, 9f), new Vector3(7f, 0f, 7f) },
+                result.LevelData.Props[0].PatrolPoints,
+                "LLM 已输出的巡逻点必须原样保留");
+        }
     }
 }

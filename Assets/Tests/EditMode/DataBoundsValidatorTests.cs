@@ -174,5 +174,43 @@ namespace AILevelGenerator.Tests.EditMode
 
             Assert.IsTrue(result.IsValid, "合法数值应通过全部边界检查");
         }
+
+        // —— 巡逻点（Day2 战斗扩展） ——
+
+        [Test]
+        public void 巡逻点含NaN_报数值非法且定位到字段()
+        {
+            var data = CreateLevelData();
+            data.Props[0].PatrolPoints = new List<Vector3> { new(float.NaN, 0, 0) };
+
+            var result = Validate(data);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.AreEqual("DATA_NAN_OR_INFINITE", result.Errors[0].Code);
+            Assert.AreEqual("props[0].patrol_points[0]", result.Errors[0].DataPath);
+        }
+
+        [Test]
+        public void 巡逻点超限_报超出范围且定位索引()
+        {
+            var data = CreateLevelData();
+            data.Props[0].PatrolPoints = new List<Vector3> { Vector3.zero, new(0, 0, 50001) };
+
+            var result = Validate(data);
+
+            Assert.AreEqual("DATA_POSITION_OUT_OF_RANGE", result.Errors[0].Code);
+            Assert.AreEqual("props[0].patrol_points[1]", result.Errors[0].DataPath);
+        }
+
+        [Test]
+        public void 巡逻点为空_不影响其他字段校验()
+        {
+            var data = CreateLevelData();
+            data.Props[0].PatrolPoints = new List<Vector3>();
+
+            var result = Validate(data);
+
+            Assert.IsTrue(result.IsValid, "空巡逻点列表是合法状态（LLM 未命中 Schema 的正常形态）");
+        }
     }
 }

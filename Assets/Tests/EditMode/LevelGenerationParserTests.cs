@@ -226,5 +226,48 @@ namespace AILevelGenerator.Tests.EditMode
             Assert.IsNull(result.Level);
             StringAssert.Contains("对象", result.Errors[0].Message);
         }
+
+        // —— 巡逻点（Day2 战斗扩展） ——
+
+        [Test]
+        public void 解析_敌人带巡逻点_映射到PropPlacement()
+        {
+            var result = LevelGenerationParser.Parse(
+                "{\"props\":[{\"prefab_logical_name\":\"敌人-弓箭手\",\"position\":{\"x\":5,\"z\":5}," +
+                "\"patrol_points\":[{\"x\":1,\"y\":0,\"z\":1},{\"x\":-2,\"z\":3}]}]}");
+
+            Assert.IsTrue(result.IsValid);
+            var prop = result.Level.Props[0];
+            Assert.AreEqual(2, prop.PatrolPoints.Count, "patrol_points 数组应映射为巡逻点列表");
+            Assert.AreEqual(new Vector3(1f, 0f, 1f), prop.PatrolPoints[0]);
+            Assert.AreEqual(new Vector3(-2f, 0f, 3f), prop.PatrolPoints[1], "缺失 y 分量应为 0");
+            Assert.IsEmpty(result.Warnings);
+        }
+
+        [Test]
+        public void 解析_无巡逻点_空列表且无警告()
+        {
+            var result = LevelGenerationParser.Parse(
+                "{\"props\":[{\"prefab_logical_name\":\"宝箱\",\"position\":{\"x\":1}}]}");
+
+            Assert.IsTrue(result.IsValid);
+            var prop = result.Level.Props[0];
+            Assert.IsNotNull(prop.PatrolPoints);
+            Assert.IsEmpty(prop.PatrolPoints, "Schema 未命中巡逻点时应为空列表（由模板兜底）");
+            Assert.IsEmpty(result.Warnings);
+        }
+
+        [Test]
+        public void 解析_巡逻点含非坐标元素_跳过并警告不阻断()
+        {
+            var result = LevelGenerationParser.Parse(
+                "{\"props\":[{\"prefab_logical_name\":\"敌人-近战\",\"patrol_points\":[{\"x\":1},\"原地等待\",5]}]}");
+
+            Assert.IsTrue(result.IsValid, "巡逻点局部非法不应阻断生成");
+            var prop = result.Level.Props[0];
+            Assert.AreEqual(1, prop.PatrolPoints.Count, "非坐标元素应被跳过");
+            Assert.AreEqual(new Vector3(1f, 0f, 0f), prop.PatrolPoints[0]);
+            Assert.AreEqual(2, result.Warnings.Count);
+        }
     }
 }

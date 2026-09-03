@@ -29,3 +29,15 @@ MonoBehaviour:
     Aliases:
     - "\u6751\u6C11"
     - Villager
+  - LogicalName: "\u654C\u4EBA-\u8FD1\u6218"
+    Prefab: {fileID: 8475647293012384756, guid: c5d7e9f1a2b30415263748596a7b8c9e, type: 3}
+    Aliases:
+    - "\u654C\u4EBA"
+    - "\u8FD1\u6218"
+    - Melee
+  - LogicalName: "\u654C\u4EBA-\u7CBE\u82F1"
+    Prefab: {fileID: 8574638291047563827, guid: d6e8f0a2b4c305162738495a6b7c8d9f, type: 3}
+    Aliases:
+    - "\u654C\u4EBA"
+    - "\u7CBE\u82F1"
+    - Elite

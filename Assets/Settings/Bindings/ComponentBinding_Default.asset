@@ -27,3 +27,31 @@ MonoBehaviour:
         Value: 2.5
       - Key: useNavMesh
         Value: true
+  - LogicalName: "\u654C\u4EBA-\u8FD1\u6218"
+    Components:
+    - ComponentTypeName: AILevelGenerator.Runtime.Components.MonsterHealth
+      Parameters:
+      - Key: maxHealth
+        Value: 100
+    - ComponentTypeName: AILevelGenerator.Runtime.Components.BasicAI
+      Parameters:
+      - Key: patrolRadius
+        Value: 4
+      - Key: moveSpeed
+        Value: 3.5
+      - Key: useNavMesh
+        Value: true
+  - LogicalName: "\u654C\u4EBA-\u7CBE\u82F1"
+    Components:
+    - ComponentTypeName: AILevelGenerator.Runtime.Components.MonsterHealth
+      Parameters:
+      - Key: maxHealth
+        Value: 300
+    - ComponentTypeName: AILevelGenerator.Runtime.Components.BasicAI
+      Parameters:
+      - Key: patrolRadius
+        Value: 6
+      - Key: moveSpeed
+        Value: 2
+      - Key: useNavMesh
+        Value: true

@@ -27,3 +27,18 @@ MonoBehaviour:
   MinTaskCount: 3
   MaxTaskCount: 5
   ForceMainTask: 1
+  EnemyOptions:
+  - LogicalName: "\u654C\u4EBA-\u8FD1\u6218"
+    Weight: 4
+  - LogicalName: "\u654C\u4EBA-\u5F13\u7BAD\u624B"
+    Weight: 3
+  - LogicalName: "\u654C\u4EBA-\u7CBE\u82F1"
+    Weight: 1
+  MinEnemyCount: 6
+  PatrolPointsPerEnemy: 2
+  PatrolRadiusMin: 2
+  PatrolRadiusMax: 6
+  EnemySpawnRingMin: 8
+  EnemySpawnRingMax: 25
+  EnemyMinSpacing: 7
+  BoundsMargin: 3

@@ -46,6 +46,18 @@ namespace AILevelGenerator.Runtime.Validation
                         AddError(result, ErrorCodes.DATA_SCALE_INVALID, $"道具缩放值必须大于 0：{prop.Scale}（零/负缩放会导致物体不可见）", $"props[{index}].scale");
                     if (HasOutOfRangeComponent(prop.Position))
                         AddError(result, ErrorCodes.DATA_POSITION_OUT_OF_RANGE, $"道具坐标超出允许范围（|分量| ≤ {MaxCoordinate}）：{prop.Position}", $"props[{index}].position");
+                    if (prop.PatrolPoints != null)
+                    {
+                        for (var j = 0; j < prop.PatrolPoints.Count; j++)
+                        {
+                            var point = prop.PatrolPoints[j];
+                            var path = $"props[{index}].patrol_points[{j}]";
+                            if (!IsFiniteVector3(point))
+                                AddError(result, ErrorCodes.DATA_NAN_OR_INFINITE, $"巡逻点数值非法（NaN 或 Infinity）：{point}", path);
+                            else if (HasOutOfRangeComponent(point))
+                                AddError(result, ErrorCodes.DATA_POSITION_OUT_OF_RANGE, $"巡逻点坐标超出允许范围（|分量| ≤ {MaxCoordinate}）：{point}", path);
+                        }
+                    }
                 }
             }
 

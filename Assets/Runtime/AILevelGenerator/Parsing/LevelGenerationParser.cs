@@ -138,7 +138,8 @@ namespace AILevelGenerator.Runtime.Parsing
                     PrefabLogicalName = logicalName,
                     Position = ParseVector3(item.Get("position"), Vector3.zero, path + ".position", clampZero: false, result.Warnings),
                     Rotation = ParseVector3(item.Get("rotation"), Vector3.zero, path + ".rotation", clampZero: false, result.Warnings), // 负旋转角度合法
-                    Scale = ParseVector3(item.Get("scale"), Vector3.one, path + ".scale", clampZero: true, result.Warnings) // 负缩放导致翻转/不可见，归零
+                    Scale = ParseVector3(item.Get("scale"), Vector3.one, path + ".scale", clampZero: true, result.Warnings), // 负缩放导致翻转/不可见，归零
+                    PatrolPoints = ParsePatrolPoints(item.Get("patrol_points"), path, result.Warnings) // 巡逻点（可选，非数组/缺失 → 空列表由模板兜底）
                 });
             }
         }
@@ -169,6 +170,25 @@ namespace AILevelGenerator.Runtime.Parsing
                     TimeLimit = timeLimit <= 0f ? -1f : timeLimit // 缺失/≤0 → 无时限
                 });
             }
+        }
+
+        /// <summary> 巡逻点列表解析：缺失/非数组 → 空列表；元素非坐标对象 → 跳过 + warning（不阻断生成） </summary>
+        private static List<Vector3> ParsePatrolPoints(JsonValue node, string path, List<ValidationWarning> warnings)
+        {
+            var points = new List<Vector3>();
+            if (node == null || !node.IsArray) return points;
+
+            for (var i = 0; i < node.ArrayValue.Count; i++)
+            {
+                var item = node.ArrayValue[i];
+                if (item == null || !item.IsObject)
+                {
+                    AddWarning(warnings, path + ".patrol_points[" + i + "]", "巡逻点必须是坐标对象，该点已跳过");
+                    continue;
+                }
+                points.Add(ParseVector3(item, Vector3.zero, $"{path}.patrol_points[{i}]", clampZero: false, warnings)); // 负坐标合法（对称布局）
+            }
+            return points;
         }
 
         private static RewardData ParseReward(JsonValue node, string path, List<ValidationWarning> warnings)

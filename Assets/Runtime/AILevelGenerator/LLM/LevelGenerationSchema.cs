@@ -80,7 +80,10 @@ namespace AILevelGenerator.Runtime.LLM
             sb.Append(",\"description\":\"物体逻辑名，只能从给定 enum 中选择\"},")
               .Append("\"position\":").Append(Vector3Schema("物体位置")).Append(',')
               .Append("\"rotation\":").Append(Vector3Schema("物体旋转欧拉角")).Append(',')
-              .Append("\"scale\":").Append(Vector3Schema("物体缩放，省略为 1"))
+              .Append("\"scale\":").Append(Vector3Schema("物体缩放，省略为 1")).Append(',')
+              .Append("\"patrol_points\":{\"type\":\"array\",\"description\":\"巡逻点（可选）：仅巡逻型敌人携带，按列表顺序循环移动的路径点；不输出时由模板按配置确定性兜底\",\"items\":")
+              .Append(Vector3Schema("巡逻点坐标，列表顺序即移动顺序"))
+              .Append('}') // 关 patrol_points 数组
               .Append("}}},"); // 关 items.properties、items、props 三层
 
             // 任务列表

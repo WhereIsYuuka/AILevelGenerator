@@ -91,6 +91,25 @@ namespace AILevelGenerator.Tests.EditMode
         }
 
         [Test]
+        public void ParametersJson_道具项含可选巡逻点字段()
+        {
+            var root = JsonParser.Parse(LevelGenerationSchema.BuildParametersJson(SampleResources));
+            var itemProps = root.Get("properties").Get("props").Get("items").Get("properties");
+
+            var patrol = itemProps.Get("patrol_points");
+            Assert.IsNotNull(patrol, "巡逻型敌人需可选 patrol_points 字段");
+            Assert.AreEqual("array", patrol.Get("type").AsString(null));
+            var pointItem = patrol.Get("items");
+            Assert.IsNotNull(pointItem.Get("properties").Get("x"), "巡逻点必须为坐标对象");
+            Assert.IsNotNull(pointItem.Get("properties").Get("z"));
+            Assert.AreEqual("false", pointItem.Get("additionalProperties").AsString(null), "巡逻点对象应禁止未知字段");
+
+            var required = root.Get("required");
+            foreach (var r in required.ArrayValue)
+                Assert.AreNotEqual("patrol_points", r.AsString(null), "巡逻点是可选字段，不应进入顶层必填");
+        }
+
+        [Test]
         public void ParametersJson_资源名含特殊字符_正确转义()
         {
             var root = JsonParser.Parse(LevelGenerationSchema.BuildParametersJson(new[] { "宝\"箱", "A\\B" }));
